@@ -194,6 +194,28 @@ func runInit() error {
 	}
 	fmt.Printf("%s Initialized state database: %s\n", successStyle.Render("✓"), infoStyle.Render(dbPath))
 
+	// Step 6: Gitignore
+	var addToGitignore bool = false
+	err = huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Add .assistant-to to .gitignore?").
+				Description("Prevents your local workspace state from being tracked.").
+				Value(&addToGitignore),
+		),
+	).WithTheme(huh.ThemeCharm()).Run()
+	if err != nil {
+		return fmt.Errorf("gitignore confirmation cancelled: %w", err)
+	}
+
+	if addToGitignore {
+		if err := appendToGitignore(".assistant-to/"); err != nil {
+			fmt.Printf("%s Failed to update .gitignore: %v\n", infoStyle.Render("!"), err)
+		} else {
+			fmt.Printf("%s Added .assistant-to/ to .gitignore\n", successStyle.Render("✓"))
+		}
+	}
+
 	fmt.Println(successStyle.Render("\nInitialization complete. Your workspace is ready."))
 	return nil
 }
@@ -216,4 +238,30 @@ func fetchOpencodeModels() ([]string, error) {
 		}
 	}
 	return models, nil
+}
+
+func appendToGitignore(entry string) error {
+	content, err := os.ReadFile(".gitignore")
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == entry {
+			return nil // already exists
+		}
+	}
+
+	f, err := os.OpenFile(".gitignore", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if len(content) > 0 && content[len(content)-1] != '\n' {
+		f.WriteString("\n")
+	}
+	_, err = f.WriteString(entry + "\n")
+	return err
 }
