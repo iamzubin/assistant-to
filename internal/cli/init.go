@@ -77,26 +77,66 @@ func runInit() error {
 
 	// Step 2: Model Selection based on Tool
 	if tool == "gemini" {
-		largeOpts := []huh.Option[string]{
-			huh.NewOption("gemini-3.1-pro-preview", "gemini-3.1-pro-preview"),
-			huh.NewOption("gemini-3-flash-preview", "gemini-3-flash-preview"),
-			huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
-			huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
-			huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
+		allGeminiModels := []string{
+			"gemini-3.1-pro-preview",
+			"gemini-3-flash-preview",
+			"gemini-2.5-pro",
+			"gemini-2.5-flash",
+			"gemini-2.5-flash-lite",
 		}
-		mediumOpts := []huh.Option[string]{
-			huh.NewOption("gemini-3-flash-preview", "gemini-3-flash-preview"),
-			huh.NewOption("gemini-3.1-pro-preview", "gemini-3.1-pro-preview"),
-			huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
-			huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
-			huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
+
+		var searchTerm string
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("Search for a model").
+					Placeholder("Type to filter models...").
+					Value(&searchTerm),
+			),
+		).WithTheme(huh.ThemeCharm())
+		if err := form.Run(); err != nil {
+			return fmt.Errorf("model search cancelled: %w", err)
 		}
-		fastOpts := []huh.Option[string]{
-			huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
-			huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
-			huh.NewOption("gemini-3-flash-preview", "gemini-3-flash-preview"),
-			huh.NewOption("gemini-3.1-pro-preview", "gemini-3.1-pro-preview"),
-			huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
+
+		filteredGeminiModels := filterModels(allGeminiModels, searchTerm)
+
+		largeOpts := make([]huh.Option[string], len(filteredGeminiModels))
+		mediumOpts := make([]huh.Option[string], len(filteredGeminiModels))
+		fastOpts := make([]huh.Option[string], len(filteredGeminiModels))
+
+		for i, m := range filteredGeminiModels {
+			largeOpts[i] = huh.NewOption(m, m)
+			mediumOpts[i] = huh.NewOption(m, m)
+			fastOpts[i] = huh.NewOption(m, m)
+		}
+
+		// If no models match the search, provide an option to clear the search or proceed
+		if len(filteredGeminiModels) == 0 {
+			var clearSearch bool
+			err = huh.NewForm(
+				huh.NewGroup(
+					huh.NewConfirm().
+						Title("No models found matching your search. Clear search and show all models?").
+						Value(&clearSearch),
+				),
+			).WithTheme(huh.ThemeCharm()).Run()
+			if err != nil {
+				return fmt.Errorf("model selection cancelled: %w", err)
+			}
+			if clearSearch {
+				filteredGeminiModels = allGeminiModels
+				largeOpts = make([]huh.Option[string], len(filteredGeminiModels))
+				mediumOpts = make([]huh.Option[string], len(filteredGeminiModels))
+				fastOpts = make([]huh.Option[string], len(filteredGeminiModels))
+
+				for i, m := range filteredGeminiModels {
+					largeOpts[i] = huh.NewOption(m, m)
+					mediumOpts[i] = huh.NewOption(m, m)
+					fastOpts[i] = huh.NewOption(m, m)
+				}
+			} else {
+				return fmt.Errorf("model selection cancelled: no models to select")
+			}
 		}
 
 		err = huh.NewForm(
@@ -125,8 +165,22 @@ func runInit() error {
 		// Attempt to fetch models from `opencode models`
 		models, fetchErr := fetchOpencodeModels()
 		if fetchErr == nil && len(models) > 0 {
+			var searchTerm string
+			form := huh.NewForm(
+				huh.NewGroup(
+					huh.NewInput().
+						Title("Search for a model").
+						Placeholder("Type to filter models...").
+						Value(&searchTerm),
+				),
+			).WithTheme(huh.ThemeCharm())
+			if err := form.Run(); err != nil {
+				return fmt.Errorf("model search cancelled: %w", err)
+			}
+
+			filteredModels := filterModels(models, searchTerm)
 			var opts []huh.Option[string]
-			for _, m := range models {
+			for _, m := range filteredModels {
 				opts = append(opts, huh.NewOption(m, m))
 			}
 			err = huh.NewForm(
@@ -258,6 +312,21 @@ func fetchOpencodeModels() ([]string, error) {
 		}
 	}
 	return models, nil
+}
+
+func filterModels(models []string, searchTerm string) []string {
+	if searchTerm == "" {
+		return models
+	}
+
+	var filtered []string
+	lowerSearchTerm := strings.ToLower(searchTerm)
+	for _, model := range models {
+		if strings.Contains(strings.ToLower(model), lowerSearchTerm) {
+			filtered = append(filtered, model)
+		}
+	}
+	return filtered
 }
 
 func appendToGitignore(entry string) error {
