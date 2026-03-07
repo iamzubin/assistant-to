@@ -111,8 +111,8 @@ func (c *Coordinator) spawnBuilder(ctx context.Context, task db.Task) error {
 
 	// Build the initial prompt for the Builder
 	rolePrompt := c.Prompts.Get("Builder")
-	taskPrompt := fmt.Sprintf("%s\n\n---\n\n## Your Task\n\n**Title:** %s\n\n**Description:**\n%s\n\n**Target Files:**\n%s",
-		rolePrompt, task.Title, task.Description, task.TargetFiles)
+	taskPrompt := fmt.Sprintf("%s\n\n---\n\n## Your Task (ID: %d)\n\n**Title:** %s\n\n**Description:**\n%s\n\n**Target Files:**\n%s",
+		rolePrompt, task.ID, task.Title, task.Description, task.TargetFiles)
 
 	// Write prompt to a mission file in the worktree to avoid shell escaping issues
 	missionPath := filepath.Join(worktreeDir, ".mission.md")

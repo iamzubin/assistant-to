@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"assistant-to/internal/config"
 	"assistant-to/internal/db"
@@ -71,6 +72,12 @@ This simulates the orchestrator launching a task manually for testing and debugg
 		// Load prompt from agents.md if not provided
 		finalPrompt := spawnPrompt
 		if finalPrompt == "" {
+			// Normalize role (capitalize first letter) to match LoadPrompts convention
+			role := spawnRole
+			if len(role) > 0 {
+				role = strings.ToUpper(role[:1]) + strings.ToLower(role[1:])
+			}
+
 			// Look for prompts directory
 			promptsPath := filepath.Join(pwd, ".assistant-to", "prompts")
 			if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
@@ -78,7 +85,12 @@ This simulates the orchestrator launching a task manually for testing and debugg
 			}
 			prompts, err := orchestrator.LoadPrompts(promptsPath)
 			if err == nil {
-				finalPrompt = prompts.Get(spawnRole)
+				finalPrompt = prompts.Get(role)
+				if finalPrompt == "" {
+					fmt.Printf("Warning: no prompt found for role %q\n", role)
+				}
+			} else {
+				fmt.Printf("Warning: failed to load prompts: %v\n", err)
 			}
 		}
 
@@ -86,13 +98,17 @@ This simulates the orchestrator launching a task manually for testing and debugg
 		if id, err := strconv.Atoi(taskID); err == nil {
 			dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
 			database, err := db.Open(dbPath)
-			if err == nil {
+			if err != nil {
+				fmt.Printf("Warning: failed to open state database for task enrichment: %v\n", err)
+			} else {
 				defer database.Close()
 				task, err := database.GetTaskByID(id)
-				if err == nil {
+				if err != nil {
+					fmt.Printf("Warning: failed to find task %d in database: %v\n", id, err)
+				} else {
 					// Enrich the prompt with task details (matching Coordinator logic)
-					finalPrompt = fmt.Sprintf("%s\n\n---\n\n## Your Task\n\n**Title:** %s\n\n**Description:**\n%s\n\n**Target Files:**\n%s",
-						finalPrompt, task.Title, task.Description, task.TargetFiles)
+					finalPrompt = fmt.Sprintf("%s\n\n---\n\n## Your Task (ID: %d)\n\n**Title:** %s\n\n**Description:**\n%s\n\n**Target Files:**\n%s",
+						finalPrompt, task.ID, task.Title, task.Description, task.TargetFiles)
 				}
 			}
 		}

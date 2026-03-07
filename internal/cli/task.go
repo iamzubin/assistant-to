@@ -88,6 +88,7 @@ func runTaskAdd() error {
 	var (
 		title       string
 		description string
+		targetFiles string
 		difficulty  string
 	)
 
@@ -129,7 +130,18 @@ func runTaskAdd() error {
 			huh.NewText().
 				Title("Description").
 				Description("Describe what needs to be done. Be specific about requirements and acceptance criteria.").
+				Validate(func(s string) error {
+					if strings.TrimSpace(s) == "" {
+						return fmt.Errorf("description cannot be empty")
+					}
+					return nil
+				}).
 				Value(&description),
+
+			huh.NewInput().
+				Title("Target Files").
+				Description("Comma-separated list of files or directories relevant to this task.").
+				Value(&targetFiles),
 
 			huh.NewSelect[string]().
 				Title("Difficulty").
@@ -156,9 +168,9 @@ func runTaskAdd() error {
 	defer database.Close()
 
 	// Insert the task
-	taskID, err := database.AddTask(title, description, "")
+	taskID, err := database.AddTask(title, description, targetFiles)
 	if err != nil {
-		return fmt.Errorf("failed to add task: %w", err)
+		return fmt.Errorf("failed to add task to DB: %w", err)
 	}
 
 	// Generate the spec markdown
@@ -210,10 +222,14 @@ func runTaskList(status string) error {
 		return nil
 	}
 
-	fmt.Printf("%-4s | %-15s | %s\n", "ID", "Status", "Title")
-	fmt.Println(strings.Repeat("-", 40))
+	fmt.Printf("%-4s | %-12s | %s\n", "ID", "Status", "Title")
+	fmt.Println(strings.Repeat("-", 60))
 	for _, t := range tasks {
-		fmt.Printf("%-4d | %-15s | %s\n", t.ID, t.Status, t.Title)
+		displayTitle := t.Title
+		if displayTitle == "" {
+			displayTitle = "(no title)"
+		}
+		fmt.Printf("%-4d | %-12s | %s\n", t.ID, t.Status, displayTitle)
 	}
 
 	return nil
