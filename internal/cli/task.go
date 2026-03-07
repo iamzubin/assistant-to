@@ -159,8 +159,13 @@ func runTaskAdd() error {
 		return fmt.Errorf("task creation cancelled: %w", err)
 	}
 
+	root, err := findProjectRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find project root: %w", err)
+	}
+
 	// Open the database
-	dbPath := filepath.Join(".assistant-to", "state.db")
+	dbPath := filepath.Join(root, ".assistant-to", "state.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
@@ -185,7 +190,7 @@ func runTaskAdd() error {
 `, taskID, title, difficulty, description)
 
 	// Ensure specs directory exists
-	specsDir := filepath.Join(".assistant-to", "specs")
+	specsDir := filepath.Join(root, ".assistant-to", "specs")
 	if err := os.MkdirAll(specsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create specs directory: %w", err)
 	}
@@ -205,7 +210,11 @@ func runTaskAdd() error {
 }
 
 func runTaskList(status string) error {
-	dbPath := filepath.Join(".assistant-to", "state.db")
+	root, err := findProjectRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find project root: %w", err)
+	}
+	dbPath := filepath.Join(root, ".assistant-to", "state.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
@@ -236,7 +245,11 @@ func runTaskList(status string) error {
 }
 
 func runTaskUpdate(id int, status string) error {
-	dbPath := filepath.Join(".assistant-to", "state.db")
+	root, err := findProjectRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find project root: %w", err)
+	}
+	dbPath := filepath.Join(root, ".assistant-to", "state.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
@@ -252,7 +265,11 @@ func runTaskUpdate(id int, status string) error {
 }
 
 func runTaskRemove(id int) error {
-	dbPath := filepath.Join(".assistant-to", "state.db")
+	root, err := findProjectRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find project root: %w", err)
+	}
+	dbPath := filepath.Join(root, ".assistant-to", "state.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)

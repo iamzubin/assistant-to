@@ -17,9 +17,9 @@ var startCmd = &cobra.Command{
 and spawns isolated Builder agents in tmux sessions inside git worktrees.
 Each Builder receives the appropriate system prompt and model from config.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		pwd, err := os.Getwd()
+		pwd, err := findProjectRoot()
 		if err != nil {
-			fmt.Printf("Error getting working directory: %v\n", err)
+			fmt.Printf("Failed to find project root: %v\n", err)
 			os.Exit(1)
 		}
 

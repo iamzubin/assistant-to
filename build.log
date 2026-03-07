@@ -1,3 +1,1 @@
-# assistant-to/internal/tui
-internal/tui/dash.go:193:37: cannot call pointer method String on strings.Builder
-internal/tui/dash.go:199:39: cannot call pointer method String on strings.Builder
+no Go files in /home/iamzubin/Work/assistant-to

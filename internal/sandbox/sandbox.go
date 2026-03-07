@@ -44,9 +44,10 @@ func (t *TmuxSession) Start(ctx context.Context) error {
 	if t.Command != "" {
 		// If a command is given, we append the execute string.
 		// Note: A bare tmux command will close the session immediately after completion.
-		// This is the desired behavior for autonomous agents.
-		// We wrap in 'bash -c' to ensure proper shell parsing of arguments like --prompt "..."
-		args = append(args, "bash", "-c", t.Command)
+		// To prevent tmux from instantly closing on abrupt panics or process crashes,
+		// we keep the pane open using a fallback loop.
+		fallbackCmd := fmt.Sprintf("%s || { echo '\n[Agent Crash/Exit] The agent process failed with a non-zero exit code. Tmux session kept open for debugging...'; sleep 86400; }", t.Command)
+		args = append(args, "bash", "-c", fallbackCmd)
 	}
 
 	cmd := exec.CommandContext(ctx, "tmux", args...)
@@ -56,6 +57,16 @@ func (t *TmuxSession) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start tmux session %q: %v (output: %s)", t.SessionName, err, output)
 	}
 
+	return nil
+}
+
+// SendInput sends keystrokes directly to the tmux session, followed by Enter
+func (t *TmuxSession) SendInput(keys string) error {
+	cmd := exec.Command("tmux", "send-keys", "-t", t.SessionName, keys, "C-m")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to send keys to session %q: %v (output: %s)", t.SessionName, err, output)
+	}
 	return nil
 }
 

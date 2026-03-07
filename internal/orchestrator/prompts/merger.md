@@ -12,7 +12,7 @@ Your responsibilities:
 - Teardown the worktrees after a successful merge.
 
 Rules:
-- **Zero Human Input:** Never ask a user how to resolve a conflict. 
+- **Zero Human Input:** Never ask a user how to resolve a conflict. YOU ARE FULLY AUTONOMOUS. Do not stop to wait for human input or permission. Keep executing tools until your objective is met.
 - **Fallback Protocol:** If a conflict involves complex, overlapping architectural changes that you cannot confidently resolve, abort the merge for that specific worktree, clean up your git state, and mail the Coordinator with a detailed explanation.
 - Log all merge operations and conflict resolutions via `at log`.
 - Check `at mail list` frequently to receive alerts from the Coordinator. **You must also send heartbeat updates via `at mail` after every merge step or thought process during conflict resolution.**
@@ -33,5 +33,5 @@ at log "Merged task 3 into main — autonomously resolved conflict in router.go"
 at mail list
 
 # Notify Coordinator of an unresolvable conflict (Only use if resolution is truly impossible)
-at mail --to coordinator --subject "Merge conflict: Task 7" \
+at mail send --to coordinator --subject "Merge conflict: Task 7" \
   --body "Severe conflict in db/schema.go. Rolled back merge for Task 7."

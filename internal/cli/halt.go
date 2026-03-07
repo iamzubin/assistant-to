@@ -3,7 +3,6 @@ package cli
 import (
 	"assistant-to/internal/sandbox"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -53,7 +52,11 @@ func runHalt() error {
 	sessions := strings.Split(strings.TrimSpace(string(out)), "\n")
 	killedCount := 0
 
-	pwd, _ := os.Getwd()
+	pwd, err := findProjectRoot()
+	if err != nil {
+		fmt.Println(warningStyle.Render("Failed to find project root."))
+		return nil
+	}
 	prefix := sandbox.ProjectPrefix(pwd)
 
 	for _, session := range sessions {

@@ -25,7 +25,11 @@ func init() {
 }
 
 func runDash() error {
-	dbPath := filepath.Join(".assistant-to", "state.db")
+	root, err := findProjectRoot()
+	if err != nil {
+		return fmt.Errorf("failed to find project root: %w", err)
+	}
+	dbPath := filepath.Join(root, ".assistant-to", "state.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open workspace database: %w\nMake sure you have run 'at init' first.", err)

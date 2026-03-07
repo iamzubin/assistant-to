@@ -15,6 +15,7 @@ var (
 	mailTo      string
 	mailSubject string
 	mailBody    string
+	mailFrom    string
 )
 
 var mailCmd = &cobra.Command{
@@ -26,7 +27,11 @@ var mailSendCmd = &cobra.Command{
 	Use:   "send",
 	Short: "Send a message to another agent",
 	Run: func(cmd *cobra.Command, args []string) {
-		pwd, _ := os.Getwd()
+		pwd, err := findProjectRoot()
+		if err != nil {
+			fmt.Printf("Failed to find project root: %v\n", err)
+			os.Exit(1)
+		}
 		dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
 		database, err := db.Open(dbPath)
 		if err != nil {
@@ -35,8 +40,17 @@ var mailSendCmd = &cobra.Command{
 		}
 		defer database.Close()
 
-		query := `INSERT INTO mail (sender, recipient, subject, body) VALUES ('User', ?, ?, ?)`
-		_, err = database.Exec(query, mailTo, mailSubject, mailBody)
+		sender := os.Getenv("AT_AGENT_ROLE")
+		if sender == "" {
+			if mailFrom != "" {
+				sender = mailFrom
+			} else {
+				sender = "User"
+			}
+		}
+
+		query := `INSERT INTO mail (sender, recipient, subject, body) VALUES (?, ?, ?, ?)`
+		_, err = database.Exec(query, sender, mailTo, mailSubject, mailBody)
 		if err != nil {
 			fmt.Printf("Failed to send mail: %v\n", err)
 			os.Exit(1)
@@ -75,18 +89,19 @@ var mailListCmd = &cobra.Command{
 		}
 		defer rows.Close()
 
-		fmt.Printf("%-15s | %-20s | %s\n", "Sender", "Subject", "Time")
 		fmt.Println("------------------------------------------------------------")
 		for rows.Next() {
 			var sender, subject, body, timestamp string
 			rows.Scan(&sender, &subject, &body, &timestamp)
-			fmt.Printf("%-15s | %-20s | %s\n", sender, subject, timestamp)
+			fmt.Printf("From: %s\nDate: %s\nSubject: %s\n\n%s\n", sender, timestamp, subject, body)
+			fmt.Println("------------------------------------------------------------")
 		}
 	},
 }
 
 func init() {
 	mailSendCmd.Flags().StringVar(&mailTo, "to", "", "Recipient agent role")
+	mailSendCmd.Flags().StringVar(&mailFrom, "from", "", "Sender agent role (optional, defaults to AT_AGENT_ROLE or User)")
 	mailSendCmd.Flags().StringVar(&mailSubject, "subject", "", "Message subject")
 	mailSendCmd.Flags().StringVar(&mailBody, "body", "", "Message body")
 	mailSendCmd.MarkFlagRequired("to")

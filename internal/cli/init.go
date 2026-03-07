@@ -103,7 +103,7 @@ func runInit() error {
 			huh.NewGroup(
 				huh.NewSelect[string]().
 					Title("Select Large Model").
-					Description("Capable of reasoning and orchestrating. Defaulted for Coordinator and Lead roles.").
+					Description("Capable of reasoning and orchestrating. Defaulted for Coordinator roles.").
 					Options(largeOpts...).
 					Value(&modelLarge),
 				huh.NewSelect[string]().
@@ -133,7 +133,7 @@ func runInit() error {
 				huh.NewGroup(
 					huh.NewSelect[string]().
 						Title("Select Large Model").
-						Description("Capable of reasoning and orchestrating. Defaulted for Coordinator and Lead roles.").
+						Description("Capable of reasoning and orchestrating. Defaulted for Coordinator roles.").
 						Options(opts...).
 						Value(&modelLarge),
 					huh.NewSelect[string]().
@@ -154,7 +154,7 @@ func runInit() error {
 				huh.NewGroup(
 					huh.NewInput().
 						Title("Enter Large Model Name").
-						Description("Capable of reasoning and orchestrating. Defaulted for Coordinator and Lead roles.").
+						Description("Capable of reasoning and orchestrating. Defaulted for Coordinator roles.").
 						Value(&modelLarge),
 					huh.NewInput().
 						Title("Enter Medium Model Name").

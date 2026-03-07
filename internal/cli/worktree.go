@@ -27,7 +27,11 @@ var createWorktreeCmd = &cobra.Command{
 			baseBranch = args[1]
 		}
 
-		pwd, _ := os.Getwd()
+		pwd, err := findProjectRoot()
+		if err != nil {
+			fmt.Printf("Failed to find project root: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("Creating worktree for task %s based on %s...\n", taskID, baseBranch)
 		dir, err := sandbox.CreateWorktree(pwd, taskID, baseBranch)
 		if err != nil {
@@ -50,9 +54,13 @@ var mergeWorktreeCmd = &cobra.Command{
 			baseBranch = args[1]
 		}
 
-		pwd, _ := os.Getwd()
+		pwd, err := findProjectRoot()
+		if err != nil {
+			fmt.Printf("Failed to find project root: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("Merging worktree for task %s into %s...\n", taskID, baseBranch)
-		err := sandbox.MergeWorktree(taskID, baseBranch, pwd)
+		err = sandbox.MergeWorktree(taskID, baseBranch, pwd)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
@@ -74,7 +82,11 @@ var teardownWorktreeCmd = &cobra.Command{
 		return cobra.ExactArgs(1)(cmd, args)
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		pwd, _ := os.Getwd()
+		pwd, err := findProjectRoot()
+		if err != nil {
+			fmt.Printf("Failed to find project root: %v\n", err)
+			os.Exit(1)
+		}
 
 		if teardownAll {
 			fmt.Println("Tearing down all worktrees...")
@@ -89,7 +101,7 @@ var teardownWorktreeCmd = &cobra.Command{
 
 		taskID := args[0]
 		fmt.Printf("Tearing down worktree for task %s...\n", taskID)
-		err := sandbox.TeardownWorktree(taskID, pwd)
+		err = sandbox.TeardownWorktree(taskID, pwd)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)

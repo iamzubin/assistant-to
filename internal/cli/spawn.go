@@ -30,9 +30,9 @@ This simulates the orchestrator launching a task manually for testing and debugg
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		taskID := args[0]
-		pwd, err := os.Getwd()
+		pwd, err := findProjectRoot()
 		if err != nil {
-			fmt.Printf("Error getting working directory: %v\n", err)
+			fmt.Printf("Failed to find project root: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -69,15 +69,15 @@ This simulates the orchestrator launching a task manually for testing and debugg
 			model = conf.ModelForRole(spawnRole)
 		}
 
+		// Normalize role (capitalize first letter) to match LoadPrompts convention
+		role := spawnRole
+		if len(role) > 0 {
+			role = strings.ToUpper(role[:1]) + strings.ToLower(role[1:])
+		}
+
 		// Load prompt from agents.md if not provided
 		finalPrompt := spawnPrompt
 		if finalPrompt == "" {
-			// Normalize role (capitalize first letter) to match LoadPrompts convention
-			role := spawnRole
-			if len(role) > 0 {
-				role = strings.ToUpper(role[:1]) + strings.ToLower(role[1:])
-			}
-
 			// Look for prompts directory
 			promptsPath := filepath.Join(pwd, ".assistant-to", "prompts")
 			if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
@@ -122,12 +122,12 @@ This simulates the orchestrator launching a task manually for testing and debugg
 		var agentCmd string
 		switch tool {
 		case "gemini":
-			agentCmd = fmt.Sprintf("%s --model %s --yolo -p \"$(cat .mission.md)\"", tool, model)
+			agentCmd = fmt.Sprintf("AT_AGENT_ROLE=%s %s --model %s --yolo -p \"$(cat .mission.md)\"", role, tool, model)
 		case "opencode":
-			agentCmd = fmt.Sprintf("%s --model %s --prompt \"$(cat .mission.md)\"", tool, model)
+			agentCmd = fmt.Sprintf("AT_AGENT_ROLE=%s %s --model %s --prompt \"$(cat .mission.md)\"", role, tool, model)
 		default:
 			// Generic fallback
-			agentCmd = fmt.Sprintf("%s --model %s --prompt \"$(cat .mission.md)\"", tool, model)
+			agentCmd = fmt.Sprintf("AT_AGENT_ROLE=%s %s --model %s --prompt \"$(cat .mission.md)\"", role, tool, model)
 		}
 
 		// Update mission status if it's a numeric task ID
@@ -163,9 +163,9 @@ Useful for observing the agent's live shell output or intervening directly.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		taskID := args[0]
-		pwd, err := os.Getwd()
+		pwd, err := findProjectRoot()
 		if err != nil {
-			fmt.Printf("Error getting working directory: %v\n", err)
+			fmt.Printf("Failed to find project root: %v\n", err)
 			os.Exit(1)
 		}
 		sessionName := sandbox.ProjectPrefix(pwd) + taskID

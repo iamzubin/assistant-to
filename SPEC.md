@@ -1,5 +1,3 @@
-# `assistant-to`
-
 **The Managing Director's Autonomous Coding Swarm**
 
 ## 1. Philosophy & Architecture
@@ -32,7 +30,7 @@ Running `at init` scaffolds the project root:
 
 * **`mail`**: `id`, `sender`, `recipient`, `subject`, `body`, `is_read`, `timestamp`. (The IPC message bus).
 * **`tasks`**: `id`, `title`, `description`, `target_files`, `status` (pending, active, review, complete).
-* **`events`**: `id`, `agent_id`, `event_type` (tool_call, file_write, error), `details`, `timestamp`. (The heartbeat and audit log).
+* **`events`**: `id`, `agent_id`, `event_type` (tool_call, file_write, error), `details`, `timestamp`.
 
 ---
 
@@ -52,40 +50,40 @@ Running `at init` scaffolds the project root:
 
 ### A. Interactive Task Management
 
-Instead of manually typing files, you use the CLI.
-
 1. Run `at task add`.
-2. A `huh` form prompts for: **Task Title**, **Description**, **Difficulty** (determines if a single Builder or multiple Builders are needed), and **Target Files**.
-3. The tool writes this to the `tasks` DB table and auto-generates `.assistant-to/specs/<task-id>.md`.
+2. A `huh` form prompts for task details.
+3. The tool writes to the `tasks` DB and auto-generates `.assistant-to/specs/<task-id>.md`.
 
 ### B. Git Worktree Sandboxing & Merging
 
-1. When a `Builder` is spawned, the orchestrator runs: `git worktree add .assistant-to/worktrees/<task-id> -b at-<task-id>`.
-2. The Builder's `tmux` session is strictly locked to this isolated directory. It cannot break your main working tree.
-3. **Session Completion:** Once all `tasks` in the DB hit `status: complete`, the Coordinator spawns the **Merger** agent. The Merger checks out your base branch, ingests the code from the `at-<task-id>` branches, resolves any git conflicts, and cleans up the worktrees.
+1. `Builder` spawned -> `git worktree add .assistant-to/worktrees/<task-id> -b at-<task-id>`.
+2. `tmux` session is strictly locked to this isolated directory.
+3. **Completion:** Merger folds code back to `main` and cleans up the worktrees.
 
-### C. The Watchdog (Stuck Agent Recovery)
+### C. The Watchdog (Mail-Based Heartbeat)
 
-LLMs occasionally loop or hang. We enforce a strict 5-minute heartbeat.
+The Coordinator monitors child sessions for stalls using the `mail` table as the primary health signal.
 
-1. Every time an agent uses a tool (e.g., reads a file, runs bash), it logs to the `events` table.
-2. The **Coordinator** routinely queries `SELECT MAX(timestamp) FROM events WHERE agent_id = ?`.
-3. **Timeout Protocol:** If an agent is idle for > 5 minutes, the Coordinator sends an `at mail` message: *"System alert: No activity detected for 5 minutes. Are you stuck? Please output your current blocker."*
-4. If the agent fails to recover, the Coordinator updates the task state, kills the tmux session, and spawns a fresh Builder with the updated context.
+1. **Detection:** If an agent has not sent a `mail` or logged an `event` for > 5 minutes, it is flagged as **STALLED**.
+2. **System Stimulus:** The Coordinator sends an `at mail` message to the child:
+* **Subject:** `SYSTEM_RECOVERY_STIMULUS`
+* **Body:** *"No activity detected for 5 minutes. RECOVERY PROTOCOL: 1. Send an immediate summary mail of your current blocker to the Coordinator. 2. Continue work or request escalation."*
+
+
+3. **Session Injection:** The Coordinator may also use `tmux send-keys` to inject a `continue` hint directly into the agent's buffer.
+4. **Hard Recovery:** If the agent fails to respond to the stimulus within 2 minutes, the Coordinator kills the `tmux` session, flags the task for retry, and spawns a fresh Builder with the previous logs as "context of failure."
 
 ---
 
 ## 5. The Director's Dashboard (`at dash`)
 
-Running `at dash` launches a full-screen `bubbletea` terminal UI with three main panes:
+Running `at dash` launches a `bubbletea` TUI:
 
-1. **Task Board (Left):** A live view of the `tasks` table (Pending, Active, Complete).
-2. **Agent Status (Top Right):** Lists active tmux sessions, current assigned task, and the "Last Seen" heartbeat timer.
-3. **The Feed (Bottom Right):** An interleaved, real-time scrolling log merging the `events` and `mail` tables.
-* *[Builder-A]* `Tool: bash "go test ./..."`
-* *[Builder-A -> Lead]* `Mail: "Tests failing on nil pointer, investigating user.go"`
-* *[Lead -> Builder-A]* `Mail: "Check the auth middleware for the missing context."`
-* *[Builder-A]* `File Edit: auth/middleware.go`
+1. **Task Board (Left):** Live view of the `tasks` table.
+2. **Agent Status (Top Right):** Lists active tmux sessions and the **"Last Mail"** heartbeat timer. Stalled agents appear in **Bold Red**.
+3. **The Feed (Bottom Right):** Interleaved log of `events` and `mail`.
+* `[Coordinator -> Builder-A]` `Mail: "STALL DETECTED. Status report required."`
+* `[Builder-A -> Coordinator]` `Mail: "Summary: Investigating circular dependency in pkg/auth."`
 
 
 
@@ -93,11 +91,11 @@ Running `at dash` launches a full-screen `bubbletea` terminal UI with three main
 
 ## 6. CLI Command Summary
 
-* `at init` - Interactive setup (via `huh`), generates `config.yaml` and empty DB.
+* `at init` - Initialize the workspace and DB.
 * `at task add` - Interactive form to queue new work.
-* `at start` - Wakes up the Coordinator to begin processing the task queue.
+* `at start` - Wakes up the Coordinator to process the queue and monitor stalls.
 * `at dash` - Opens the live TUI dashboard.
-* `at mail` - (Agent-only) CLI tool to send/fetch IPC messages.
-* `at log` - (Agent-only) CLI tool to write to the `events` timeline.
+* `at mail` - (Agent/User) Send or read IPC messages.
+* `at log` - (Agent/User) Record an event to the global timeline.
+* `at connect` - Connect to an active agent's tmux session for manual observation.
 * `at halt` - The panic button. Instantly kills all `assistant-to-*` tmux sessions.
-
