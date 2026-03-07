@@ -65,7 +65,7 @@ func (w *Watchdog) checkHeartbeat(ctx context.Context, agentID string) error {
 
 func (w *Watchdog) recoverStuckAgent(ctx context.Context, agentID string) error {
 	// 1. Send an at mail message
-	msgQuery := `INSERT INTO mail (sender, recipient, subject, body) VALUES ('Lead', ?, 'System Alert', 'System alert: No activity detected for 5 minutes. Are you stuck? Please output your current blocker.')`
+	msgQuery := `INSERT INTO mail (sender, recipient, subject, body) VALUES ('Coordinator', ?, 'System Alert', 'System alert: No activity detected for 5 minutes. Are you stuck? Please output your current blocker.')`
 	_, err := w.DB.ExecContext(ctx, msgQuery, agentID)
 	if err != nil {
 		return fmt.Errorf("failed to send recovery mail: %w", err)

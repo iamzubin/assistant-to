@@ -29,14 +29,17 @@ This checklist breaks down the remaining work from `SPEC.md` into actionable ite
   - [x] Inline Task Creation: Embed the `huh` form directly over the dashboard via hotkey `n`.
 
 ## Stage 4: Agent Sandboxing (`tmux` & `git worktree`)
-- [ ] Implement Git Worktree spawning in `internal/sandbox/git.go`:
-  - [ ] `git worktree add .assistant-to/worktrees/<task-id> -b at-<task-id>`
-  - [ ] Integration: Mount the previously created Tmux session exclusively into this directory.
-- [ ] Worktree Teardown & Merge:
-  - [ ] Build logic for the **Merger** to checkout the base branch and merge the feature branch cleanly.
+- [x] Implement Git Worktree spawning in `internal/sandbox/git.go`:
+  - [x] `git worktree add .assistant-to/worktrees/<task-id> -b at-<task-id>`
+  - [x] Integration: Mount the previously created Tmux session exclusively into this directory.
+- [x] Worktree Teardown & Merge:
+  - [x] Build logic for the **Merger** to checkout the base branch and merge the feature branch cleanly.
+- [x] Add CLI commands `at worktree create`, `at worktree merge`, `at worktree teardown` for manual control and testing.
 
 ## Stage 5: The Agent Orchestrator Main Loop
+## Stage 5: The Agent Orchestrator Main Loop
 - [ ] Implement `at start` command (wakes up Coordinator):
+  - [ ] Load system prompts from `internal/orchestrator/prompts/agents.md`.
   - [ ] Read pending tasks from DB.
-  - [ ] Spawn Lead Agent, which spawns Builder agents natively.
-  - [ ] Integrate Watchdog (already created) into the Lead agent loop.
+  - [ ] Spawn Builder agents directly via `internal/sandbox`.
+  - [ ] Integrate Watchdog into the Coordinator loop to monitor Builders.

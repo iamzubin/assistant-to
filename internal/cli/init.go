@@ -18,6 +18,8 @@ import (
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize the assistant-to workspace in the current directory",
+	Long: `Creates the local .assistant-to directory structure, configures the environment, and initializes the state database.
+This must be run once per project before launching the orchestrator or any agents.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runInit()
 	},
@@ -75,26 +77,44 @@ func runInit() error {
 
 	// Step 2: Model Selection based on Tool
 	if tool == "gemini" {
-		opts := []huh.Option[string]{
-			huh.NewOption("Auto (Gemini 2.5)", "auto-2.5"),
-			huh.NewOption("Auto (Gemini 3)", "auto-3"),
+		largeOpts := []huh.Option[string]{
+			huh.NewOption("gemini-3.1-pro-preview", "gemini-3.1-pro-preview"),
+			huh.NewOption("gemini-3-flash-preview", "gemini-3-flash-preview"),
+			huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
+			huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
+			huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
 		}
+		mediumOpts := []huh.Option[string]{
+			huh.NewOption("gemini-3-flash-preview", "gemini-3-flash-preview"),
+			huh.NewOption("gemini-3.1-pro-preview", "gemini-3.1-pro-preview"),
+			huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
+			huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
+			huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
+		}
+		fastOpts := []huh.Option[string]{
+			huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
+			huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
+			huh.NewOption("gemini-3-flash-preview", "gemini-3-flash-preview"),
+			huh.NewOption("gemini-3.1-pro-preview", "gemini-3.1-pro-preview"),
+			huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
+		}
+
 		err = huh.NewForm(
 			huh.NewGroup(
 				huh.NewSelect[string]().
 					Title("Select Large Model").
 					Description("Capable of reasoning and orchestrating. Defaulted for Coordinator and Lead roles.").
-					Options(opts...).
+					Options(largeOpts...).
 					Value(&modelLarge),
 				huh.NewSelect[string]().
 					Title("Select Medium Model").
 					Description("Balanced size for iterative tasks. Defaulted for the Builder, Merger, and Reviewer roles.").
-					Options(opts...).
+					Options(mediumOpts...).
 					Value(&modelMedium),
 				huh.NewSelect[string]().
 					Title("Select Fast Model").
 					Description("Optimized for speed and log volume. Used by Scout to do repository grepping.").
-					Options(opts...).
+					Options(fastOpts...).
 					Value(&modelFast),
 			),
 		).WithTheme(huh.ThemeCharm()).Run()

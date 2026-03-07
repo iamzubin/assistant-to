@@ -22,6 +22,7 @@ var taskCmd = &cobra.Command{
 var taskAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Interactively add a new task to the queue",
+	Long:  `Presents an interactive form to define a new workload for the agents, writing the resulting specification to the .assistant-to/specs directory and enqueueing it in the state database.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTaskAdd()
 	},

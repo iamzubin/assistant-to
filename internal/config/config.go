@@ -19,9 +19,9 @@ type Config struct {
 func Default() *Config {
 	return &Config{
 		Tool:        "gemini",
-		ModelLarge:  "auto-3",
-		ModelMedium: "auto-2.5",
-		ModelFast:   "auto-2.5",
+		ModelLarge:  "gemini-3.1-pro-preview",
+		ModelMedium: "gemini-3-flash-preview",
+		ModelFast:   "gemini-2.5-flash",
 	}
 }
 
@@ -38,6 +38,19 @@ func Load(path string) (*Config, error) {
 	}
 
 	return &conf, nil
+}
+
+// ModelForRole returns the appropriate model string for a given agent role.
+// Roles: "Coordinator" -> large, "Scout" -> fast, all others -> medium.
+func (c *Config) ModelForRole(role string) string {
+	switch role {
+	case "Coordinator":
+		return c.ModelLarge
+	case "Scout":
+		return c.ModelFast
+	default: // Builder, Reviewer, Merger
+		return c.ModelMedium
+	}
 }
 
 // Save writes the current configuration to the specified path as YAML.

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"assistant-to/internal/sandbox"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -12,6 +14,7 @@ import (
 var haltCmd = &cobra.Command{
 	Use:   "halt",
 	Short: "Immediately kill all active assistant-to agent tmux sessions",
+	Long:  `Searches for and forcefully terminates all running agent tmux sessions associated with the current project's workspace.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runHalt()
 	},
@@ -50,10 +53,13 @@ func runHalt() error {
 	sessions := strings.Split(strings.TrimSpace(string(out)), "\n")
 	killedCount := 0
 
+	pwd, _ := os.Getwd()
+	prefix := sandbox.ProjectPrefix(pwd)
+
 	for _, session := range sessions {
 		session = strings.TrimSpace(session)
-		// We only want to kill sessions managed by the orchestrator prefix
-		if strings.HasPrefix(session, "at-") {
+		// We only want to kill sessions managed by the orchestrator prefix for this SPECIFIC project
+		if strings.HasPrefix(session, prefix) {
 			killCmd := exec.Command("tmux", "kill-session", "-t", session)
 			if err := killCmd.Run(); err != nil {
 				fmt.Printf("%s Failed to kill session %s: %v\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#E8183C")).Render("✕"), session, err)

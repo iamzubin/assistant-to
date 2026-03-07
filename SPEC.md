@@ -40,8 +40,7 @@ Running `at init` scaffolds the project root:
 
 | Role | Model Tier | Capabilities | Spawns | Notes |
 | --- | --- | --- | --- | --- |
-| **Coordinator** | `large` | `dispatch`, `escalate` | Yes | Reads `tasks`, spawns Leads, triggers Merger. |
-| **Lead** | `large` | `plan`, `coordinate` | Yes | Manages Builders, monitors heartbeats. |
+| **Coordinator** | `large` | `dispatch`, `escalate` | Yes | Reads `tasks`, spawns Builders, triggers Merger. |
 | **Builder** | `medium` | `implement`, `fix` | No | Works strictly inside a `.assistant-to/worktrees/<id>` directory. |
 | **Reviewer** | `medium` | `review`, `validate` | No | Reads a completed worktree to verify logic. |
 | **Merger** | `medium` | `merge`, `resolve` | No | Triggered when session completes to fold worktrees back to `main`. |
@@ -70,9 +69,9 @@ Instead of manually typing files, you use the CLI.
 LLMs occasionally loop or hang. We enforce a strict 5-minute heartbeat.
 
 1. Every time an agent uses a tool (e.g., reads a file, runs bash), it logs to the `events` table.
-2. The **Lead** manager routinely queries `SELECT MAX(timestamp) FROM events WHERE agent_id = ?`.
-3. **Timeout Protocol:** If an agent is idle for > 5 minutes, the Lead sends an `at mail` message: *"System alert: No activity detected for 5 minutes. Are you stuck? Please output your current blocker."*
-4. If the agent fails to recover, the Lead updates the task state, kills the tmux session, and spawns a fresh Builder with the updated context.
+2. The **Coordinator** routinely queries `SELECT MAX(timestamp) FROM events WHERE agent_id = ?`.
+3. **Timeout Protocol:** If an agent is idle for > 5 minutes, the Coordinator sends an `at mail` message: *"System alert: No activity detected for 5 minutes. Are you stuck? Please output your current blocker."*
+4. If the agent fails to recover, the Coordinator updates the task state, kills the tmux session, and spawns a fresh Builder with the updated context.
 
 ---
 

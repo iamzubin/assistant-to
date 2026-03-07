@@ -1,25 +1,55 @@
 package sandbox
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 )
+
+// ProjectPrefix generates a unique, readable prefix for tmux sessions based on the project path.
+func ProjectPrefix(pwd string) string {
+	absPath, err := filepath.Abs(pwd)
+	if err != nil {
+		absPath = pwd
+	}
+	base := filepath.Base(absPath)
+
+	// Create a stable 6-character hash of the full path
+	hash := sha256.Sum256([]byte(absPath))
+	hashStr := hex.EncodeToString(hash[:])[:6]
+
+	return fmt.Sprintf("at-%s-%s-", base, hashStr)
+}
 
 // TmuxSession represents an isolated tmux session for an agent builder
 type TmuxSession struct {
 	SessionName string
 	WorktreeDir string
+	Command     string // Optional command to execute inside the session
 }
 
 // Start spawns a detached tmux session locked to the worktree directory.
 // The -d flag is critical to ensure the orchestrator doesn't get blocked
 // by the child agent's terminal.
-func (t *TmuxSession) Start() error {
+func (t *TmuxSession) Start(ctx context.Context) error {
 	// Construct the tmux new-session command
 	// -d: detach (run in background)
 	// -s: session name
 	// -c: start directory (the sandboxed worktree)
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", t.SessionName, "-c", t.WorktreeDir)
+	args := []string{"new-session", "-d", "-s", t.SessionName, "-c", t.WorktreeDir}
+
+	if t.Command != "" {
+		// If a command is given, we append the execute string.
+		// Note: A bare tmux command will close the session immediately after completion.
+		// This is the desired behavior for autonomous agents.
+		// We wrap in 'bash -c' to ensure proper shell parsing of arguments like --prompt "..."
+		args = append(args, "bash", "-c", t.Command)
+	}
+
+	cmd := exec.CommandContext(ctx, "tmux", args...)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {

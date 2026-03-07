@@ -14,6 +14,7 @@ import (
 var dashCmd = &cobra.Command{
 	Use:   "dash",
 	Short: "Open the director's live dashboard",
+	Long:  `Launches a terminal user interface (TUI) to monitor tasks, agents, and system events in real-time.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDash()
 	},

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"assistant-to/internal/db"
+	"assistant-to/internal/sandbox"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -242,6 +243,23 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
+		case "enter":
+			if m.activePane == 1 {
+				if i, ok := m.agentList.SelectedItem().(agentItem); ok {
+					pwd, _ := os.Getwd()
+					fullSession := sandbox.ProjectPrefix(pwd) + i.SessionName
+
+					tmuxCmd := "attach-session"
+					if os.Getenv("TMUX") != "" {
+						tmuxCmd = "switch-client"
+					}
+					c := exec.Command("tmux", tmuxCmd, "-t", fullSession)
+
+					return m, tea.ExecProcess(c, func(err error) tea.Msg {
+						return tickMsg(time.Now())
+					})
+				}
+			}
 		case "n":
 			m.taskForm = m.initTaskForm()
 			return m, m.taskForm.Init()
@@ -373,6 +391,9 @@ func (m *dashModel) refreshData() {
 	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
 	out, err := cmd.Output()
 
+	pwd, _ := os.Getwd()
+	prefix := sandbox.ProjectPrefix(pwd)
+
 	// Add mock agents directly from DB if any exist (used for testing without tmux)
 	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
 		mockLog, _ := m.db.GetAgentHistory("mock-builder")
@@ -384,9 +405,10 @@ func (m *dashModel) refreshData() {
 		sessions := strings.Split(strings.TrimSpace(string(out)), "\n")
 		for _, s := range sessions {
 			s = strings.TrimSpace(s)
-			if strings.HasPrefix(s, "at-") {
-				agentID := s
-				lastSeen, hbErr := m.db.GetLastHeartbeat(agentID)
+			if strings.HasPrefix(s, prefix) {
+				fullAgentID := s
+				displayName := strings.TrimPrefix(s, prefix)
+				lastSeen, hbErr := m.db.GetLastHeartbeat(fullAgentID)
 
 				status := "healthy"
 				if hbErr == nil && !lastSeen.IsZero() {
@@ -398,7 +420,7 @@ func (m *dashModel) refreshData() {
 				}
 
 				agentItems = append(agentItems, agentItem{AgentStatus{
-					SessionName:   agentID,
+					SessionName:   displayName,
 					LastHeartbeat: lastSeen,
 					Status:        status,
 				}})
@@ -495,7 +517,7 @@ func (m dashModel) View() string {
 		sortStr = "ASC"
 	}
 
-	footerText := fmt.Sprintf(" Global Commands: [n] new task • [t] toggle tasks • [a] toggle agents • [s] sort feed (%s) • [/] filter pane • [tab] focus • [q] quit ", sortStr)
+	footerText := fmt.Sprintf(" Global Commands: [n] new task • [enter] attach agent • [t] toggle tasks • [a] toggle agents • [s] sort feed (%s) • [/] filter • [tab] focus • [q] quit ", sortStr)
 	footer := m.footerStyle.Width(m.width).Align(lipgloss.Right).Render(footerText)
 
 	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
