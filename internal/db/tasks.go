@@ -78,3 +78,35 @@ func (db *DB) ListTasksByStatus(status string) ([]Task, error) {
 		return t, err
 	}, args...)
 }
+
+// RemoveTask deletes a task from the database
+func (db *DB) RemoveTask(taskID int) error {
+	query := `DELETE FROM tasks WHERE id = ?`
+	_, err := db.Exec(query, taskID)
+	if err != nil {
+		return fmt.Errorf("failed to remove task: %w", err)
+	}
+	return nil
+}
+
+// GetTaskByID retrieves a single task by its ID.
+func (db *DB) GetTaskByID(taskID int) (*Task, error) {
+	query := `
+		SELECT id, title, description, target_files, status
+		FROM tasks
+		WHERE id = ?
+	`
+	var t Task
+	var targetFiles sql.NullString
+	err := db.QueryRow(query, taskID).Scan(&t.ID, &t.Title, &t.Description, &targetFiles, &t.Status)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("task not found: %d", taskID)
+		}
+		return nil, fmt.Errorf("failed to get task: %w", err)
+	}
+	if targetFiles.Valid {
+		t.TargetFiles = targetFiles.String
+	}
+	return &t, nil
+}

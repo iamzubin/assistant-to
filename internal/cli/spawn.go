@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 
 	"assistant-to/internal/config"
+	"assistant-to/internal/db"
+	"assistant-to/internal/orchestrator"
 	"assistant-to/internal/sandbox"
 
 	"github.com/spf13/cobra"
@@ -34,7 +37,9 @@ This simulates the orchestrator launching a task manually for testing and debugg
 
 		// Optionally create the worktree if it doesn't already exist
 		worktreeDir := filepath.Join(pwd, ".assistant-to", "worktrees", taskID)
-		if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
+		if taskID == "Coordinator" {
+			worktreeDir = pwd
+		} else if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
 			fmt.Printf("Worktree not found, attempting to create it on 'main'...\n")
 			_, err = sandbox.CreateWorktree(pwd, taskID, "main")
 			if err != nil {
@@ -63,23 +68,59 @@ This simulates the orchestrator launching a task manually for testing and debugg
 			model = conf.ModelForRole(spawnRole)
 		}
 
+		// Load prompt from agents.md if not provided
+		finalPrompt := spawnPrompt
+		if finalPrompt == "" {
+			// Look for prompts directory
+			promptsPath := filepath.Join(pwd, ".assistant-to", "prompts")
+			if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
+				promptsPath = filepath.Join(pwd, "internal", "orchestrator", "prompts")
+			}
+			prompts, err := orchestrator.LoadPrompts(promptsPath)
+			if err == nil {
+				finalPrompt = prompts.Get(spawnRole)
+			}
+		}
+
+		// If it's a numeric task ID, enrich the prompt with task details from DB
+		if id, err := strconv.Atoi(taskID); err == nil {
+			dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
+			database, err := db.Open(dbPath)
+			if err == nil {
+				defer database.Close()
+				task, err := database.GetTaskByID(id)
+				if err == nil {
+					// Enrich the prompt with task details (matching Coordinator logic)
+					finalPrompt = fmt.Sprintf("%s\n\n---\n\n## Your Task\n\n**Title:** %s\n\n**Description:**\n%s\n\n**Target Files:**\n%s",
+						finalPrompt, task.Title, task.Description, task.TargetFiles)
+				}
+			}
+		}
+
+		// Write prompt to a mission file in the worktree
+		missionPath := filepath.Join(worktreeDir, ".mission.md")
+		if err := os.WriteFile(missionPath, []byte(finalPrompt), 0644); err != nil {
+			fmt.Printf("Warning: failed to write mission file: %v\n", err)
+		}
+
 		var agentCmd string
 		switch tool {
 		case "gemini":
-			agentCmd = fmt.Sprintf("%s --model %s --yolo", tool, model)
-			if spawnPrompt != "" {
-				agentCmd = fmt.Sprintf("%s --model %s --yolo -p %q", tool, model, spawnPrompt)
-			}
+			agentCmd = fmt.Sprintf("%s --model %s --yolo -p \"$(cat .mission.md)\"", tool, model)
 		case "opencode":
-			agentCmd = fmt.Sprintf("%s --model %s", tool, model)
-			if spawnPrompt != "" {
-				agentCmd = fmt.Sprintf("%s --model %s --prompt %q", tool, model, spawnPrompt)
-			}
+			agentCmd = fmt.Sprintf("%s --model %s --prompt \"$(cat .mission.md)\"", tool, model)
 		default:
 			// Generic fallback
-			agentCmd = fmt.Sprintf("%s --model %s", tool, model)
-			if spawnPrompt != "" {
-				agentCmd = fmt.Sprintf("%s --model %s --prompt %q", tool, model, spawnPrompt)
+			agentCmd = fmt.Sprintf("%s --model %s --prompt \"$(cat .mission.md)\"", tool, model)
+		}
+
+		// Update mission status if it's a numeric task ID
+		if id, err := strconv.Atoi(taskID); err == nil {
+			dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
+			database, err := db.Open(dbPath)
+			if err == nil {
+				database.UpdateTaskStatus(id, "active")
+				database.Close()
 			}
 		}
 
@@ -138,6 +179,6 @@ func init() {
 	spawnCmd.Flags().StringVarP(&spawnRole, "role", "r", "Builder", "Role of the agent (e.g., Builder, Reviewer)")
 	spawnCmd.Flags().StringVarP(&spawnPrompt, "prompt", "p", "", "Initial prompt or context for the agent")
 
-	rootCmd.AddCommand(spawnCmd)
-	rootCmd.AddCommand(connectCmd)
+	RootCmd.AddCommand(spawnCmd)
+	RootCmd.AddCommand(connectCmd)
 }

@@ -21,7 +21,7 @@ var dashCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(dashCmd)
+	RootCmd.AddCommand(dashCmd)
 }
 
 func runDash() error {

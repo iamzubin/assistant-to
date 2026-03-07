@@ -37,7 +37,6 @@ This checklist breaks down the remaining work from `SPEC.md` into actionable ite
 - [x] Add CLI commands `at worktree create`, `at worktree merge`, `at worktree teardown` for manual control and testing.
 
 ## Stage 5: The Agent Orchestrator Main Loop
-## Stage 5: The Agent Orchestrator Main Loop
 - [ ] Implement `at start` command (wakes up Coordinator):
   - [ ] Load system prompts from `internal/orchestrator/prompts/agents.md`.
   - [ ] Read pending tasks from DB.

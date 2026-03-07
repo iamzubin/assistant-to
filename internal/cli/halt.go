@@ -21,7 +21,7 @@ var haltCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(haltCmd)
+	RootCmd.AddCommand(haltCmd)
 }
 
 func runHalt() error {

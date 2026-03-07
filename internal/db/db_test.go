@@ -131,6 +131,20 @@ func TestTasksCRUD(t *testing.T) {
 	if len(pendingTasks) != 0 {
 		t.Errorf("Expected 0 pending tasks, got %d", len(pendingTasks))
 	}
+
+	// Test GetTaskByID
+	task, err := database.GetTaskByID(int(taskID))
+	if err != nil {
+		t.Fatalf("GetTaskByID failed: %v", err)
+	}
+	if task.ID != int(taskID) || task.Title != "Test DB" {
+		t.Errorf("Unexpected task content: %+v", task)
+	}
+
+	_, err = database.GetTaskByID(999)
+	if err == nil {
+		t.Errorf("Expected error for non-existent task ID")
+	}
 }
 
 func TestEventsCRUD(t *testing.T) {

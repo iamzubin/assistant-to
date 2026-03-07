@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"assistant-to/internal/db"
@@ -30,7 +31,57 @@ var taskAddCmd = &cobra.Command{
 
 func init() {
 	taskCmd.AddCommand(taskAddCmd)
-	rootCmd.AddCommand(taskCmd)
+	taskCmd.AddCommand(taskListCmd)
+	taskCmd.AddCommand(taskUpdateCmd)
+	taskCmd.AddCommand(taskRemoveCmd)
+	RootCmd.AddCommand(taskCmd)
+}
+
+var taskRemoveCmd = &cobra.Command{
+	Use:   "remove <id>",
+	Short: "Remove a task from the queue",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		id, err := strconv.Atoi(args[0])
+		if err != nil {
+			fmt.Printf("Error: invalid task id: %v\n", err)
+			os.Exit(1)
+		}
+		if err := runTaskRemove(id); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var taskListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List tasks in the queue",
+	Run: func(cmd *cobra.Command, args []string) {
+		status, _ := cmd.Flags().GetString("status")
+		if err := runTaskList(status); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var taskUpdateCmd = &cobra.Command{
+	Use:   "update <id> <status>",
+	Short: "Update a task's status",
+	Args:  cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		id, err := strconv.Atoi(args[0])
+		if err != nil {
+			fmt.Printf("Error: invalid task id: %v\n", err)
+			os.Exit(1)
+		}
+		status := args[1]
+		if err := runTaskUpdate(id, status); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
 }
 
 func runTaskAdd() error {
@@ -139,4 +190,67 @@ func runTaskAdd() error {
 	fmt.Printf("  %s %s\n", infoStyle.Render("Spec:"), specPath)
 
 	return nil
+}
+
+func runTaskList(status string) error {
+	dbPath := filepath.Join(".assistant-to", "state.db")
+	database, err := db.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer database.Close()
+
+	tasks, err := database.ListTasksByStatus(status)
+	if err != nil {
+		return fmt.Errorf("failed to list tasks: %w", err)
+	}
+
+	if len(tasks) == 0 {
+		fmt.Println("No tasks found.")
+		return nil
+	}
+
+	fmt.Printf("%-4s | %-15s | %s\n", "ID", "Status", "Title")
+	fmt.Println(strings.Repeat("-", 40))
+	for _, t := range tasks {
+		fmt.Printf("%-4d | %-15s | %s\n", t.ID, t.Status, t.Title)
+	}
+
+	return nil
+}
+
+func runTaskUpdate(id int, status string) error {
+	dbPath := filepath.Join(".assistant-to", "state.db")
+	database, err := db.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer database.Close()
+
+	if err := database.UpdateTaskStatus(id, status); err != nil {
+		return fmt.Errorf("failed to update task: %w", err)
+	}
+
+	fmt.Printf("Task %d updated to status: %s\n", id, status)
+	return nil
+}
+
+func runTaskRemove(id int) error {
+	dbPath := filepath.Join(".assistant-to", "state.db")
+	database, err := db.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer database.Close()
+
+	if err := database.RemoveTask(id); err != nil {
+		return fmt.Errorf("failed to remove task: %w", err)
+	}
+
+	fmt.Printf("Task %d removed.\n", id)
+	return nil
+}
+
+func init() {
+	taskListCmd.Flags().StringP("status", "s", "", "Filter tasks by status")
 }

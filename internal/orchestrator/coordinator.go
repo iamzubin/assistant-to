@@ -37,11 +37,11 @@ func NewCoordinator(pwd string) (*Coordinator, error) {
 		return nil, fmt.Errorf("failed to open state database: %w", err)
 	}
 
-	// Look for agents.md in the project's .assistant-to dir, then next to the binary.
-	promptsPath := filepath.Join(pwd, ".assistant-to", "prompts", "agents.md")
+	// Look for prompts directory in the project's .assistant-to dir, then next to the binary.
+	promptsPath := filepath.Join(pwd, ".assistant-to", "prompts")
 	if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
 		// Fallback: look relative to this source file's package (dev mode)
-		promptsPath = filepath.Join(pwd, "internal", "orchestrator", "prompts", "agents.md")
+		promptsPath = filepath.Join(pwd, "internal", "orchestrator", "prompts")
 	}
 	prompts, err := LoadPrompts(promptsPath)
 	if err != nil {
@@ -114,6 +114,12 @@ func (c *Coordinator) spawnBuilder(ctx context.Context, task db.Task) error {
 	taskPrompt := fmt.Sprintf("%s\n\n---\n\n## Your Task\n\n**Title:** %s\n\n**Description:**\n%s\n\n**Target Files:**\n%s",
 		rolePrompt, task.Title, task.Description, task.TargetFiles)
 
+	// Write prompt to a mission file in the worktree to avoid shell escaping issues
+	missionPath := filepath.Join(worktreeDir, ".mission.md")
+	if err := os.WriteFile(missionPath, []byte(taskPrompt), 0644); err != nil {
+		return fmt.Errorf("failed to write mission file: %w", err)
+	}
+
 	model := c.Config.ModelForRole("Builder")
 	tool := c.Config.Tool
 	if tool == "" {
@@ -123,11 +129,11 @@ func (c *Coordinator) spawnBuilder(ctx context.Context, task db.Task) error {
 	var agentCmd string
 	switch tool {
 	case "gemini":
-		agentCmd = fmt.Sprintf("%s --model %s --yolo -p %q", tool, model, taskPrompt)
+		agentCmd = fmt.Sprintf("%s --model %s --yolo -p \"$(cat .mission.md)\"", tool, model)
 	case "opencode":
-		agentCmd = fmt.Sprintf("%s --model %s --prompt %q", tool, model, taskPrompt)
+		agentCmd = fmt.Sprintf("%s --model %s --prompt \"$(cat .mission.md)\"", tool, model)
 	default:
-		agentCmd = fmt.Sprintf("%s --model %s --prompt %q", tool, model, taskPrompt)
+		agentCmd = fmt.Sprintf("%s --model %s --prompt \"$(cat .mission.md)\"", tool, model)
 	}
 
 	sessionName := sandbox.ProjectPrefix(c.PWD) + taskID

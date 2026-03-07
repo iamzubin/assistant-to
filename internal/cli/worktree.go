@@ -103,5 +103,5 @@ func init() {
 	worktreeCmd.AddCommand(createWorktreeCmd)
 	worktreeCmd.AddCommand(mergeWorktreeCmd)
 	worktreeCmd.AddCommand(teardownWorktreeCmd)
-	rootCmd.AddCommand(worktreeCmd)
+	RootCmd.AddCommand(worktreeCmd)
 }

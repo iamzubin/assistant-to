@@ -26,7 +26,7 @@ This must be run once per project before launching the orchestrator or any agent
 }
 
 func init() {
-	rootCmd.AddCommand(initCmd)
+	RootCmd.AddCommand(initCmd)
 }
 
 func runInit() error {
