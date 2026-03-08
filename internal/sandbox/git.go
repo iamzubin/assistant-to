@@ -92,3 +92,13 @@ func TeardownAllWorktrees(repoDir string) error {
 
 	return nil
 }
+
+// RunGitCommand runs a git command with the provided arguments and returns the output
+func RunGitCommand(args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git command failed: %w\nOutput: %s", err, string(output))
+	}
+	return output, nil
+}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 
 	"assistant-to/internal/config"
 	"assistant-to/internal/db"
@@ -20,6 +21,9 @@ type Coordinator struct {
 	Config  *config.Config
 	PWD     string // Project root directory
 	Prompts *PromptBook
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	tier2   *Tier2Watchdog
 }
 
 // NewCoordinator creates a Coordinator, loading config and prompts from the project root.
@@ -61,6 +65,11 @@ func NewCoordinator(pwd string) (*Coordinator, error) {
 // 2. For each task, create a worktree + tmux session for a Builder agent.
 // 3. Start a Watchdog goroutine to monitor each Builder.
 func (c *Coordinator) Run(ctx context.Context) error {
+	// Create a cancellable context for graceful shutdown
+	ctx, cancel := context.WithCancel(ctx)
+	c.cancel = cancel
+	defer cancel()
+
 	log.Println("Coordinator: fetching pending tasks...")
 	tasks, err := c.DB.ListTasksByStatus("pending")
 	if err != nil {
@@ -88,11 +97,48 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		}
 
 		// Start Watchdog for this builder
-		watchdog := &Watchdog{DB: c.DB, PWD: c.PWD}
-		go watchdog.MonitorHeartbeats(ctx, "builder-"+taskID)
+		c.wg.Add(1)
+		go func(taskID string) {
+			defer c.wg.Done()
+			watchdog := NewWatchdog(c.DB, c.PWD, c.Config)
+			watchdog.MonitorHeartbeats(ctx, "builder-"+taskID)
+		}(taskID)
 	}
 
 	fmt.Println("All builders spawned. Run `at dash` to monitor progress.")
+
+	// Start Tier 2 Monitor Agent (if there are active tasks)
+	if len(tasks) > 0 {
+		c.tier2 = NewTier2Watchdog(c.DB, c.PWD)
+		c.tier2.Start(ctx)
+		log.Println("Coordinator: Tier 2 Monitor Agent started")
+	}
+
+	// Wait for context cancellation (shutdown signal)
+	<-ctx.Done()
+	log.Println("Coordinator: shutting down...")
+
+	// Stop Tier 2 Monitor Agent
+	if c.tier2 != nil {
+		c.tier2.Stop()
+		log.Println("Coordinator: Tier 2 Monitor Agent stopped")
+	}
+
+	// Wait for all goroutines to finish
+	c.wg.Wait()
+	log.Println("Coordinator: all workers stopped")
+
+	return nil
+}
+
+// Close gracefully shuts down the Coordinator and cleans up resources.
+func (c *Coordinator) Close() error {
+	if c.cancel != nil {
+		c.cancel()
+	}
+	if c.DB != nil {
+		return c.DB.Close()
+	}
 	return nil
 }
 

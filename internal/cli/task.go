@@ -35,6 +35,8 @@ func init() {
 	taskCmd.AddCommand(taskUpdateCmd)
 	taskCmd.AddCommand(taskRemoveCmd)
 	RootCmd.AddCommand(taskCmd)
+
+	taskListCmd.Flags().StringP("status", "s", "", "Filter tasks by status")
 }
 
 var taskRemoveCmd = &cobra.Command{
@@ -172,6 +174,10 @@ func runTaskAdd() error {
 	}
 	defer database.Close()
 
+	if err := database.InitSchema(); err != nil {
+		return fmt.Errorf("failed to initialize database schema: %w", err)
+	}
+
 	// Insert the task
 	taskID, err := database.AddTask(title, description, targetFiles)
 	if err != nil {
@@ -192,12 +198,20 @@ func runTaskAdd() error {
 	// Ensure specs directory exists
 	specsDir := filepath.Join(root, ".assistant-to", "specs")
 	if err := os.MkdirAll(specsDir, 0755); err != nil {
+		// Rollback: remove the task from DB
+		if rollbackErr := database.RemoveTask(int(taskID)); rollbackErr != nil {
+			return fmt.Errorf("failed to create specs directory: %w (rollback also failed: %v)", err, rollbackErr)
+		}
 		return fmt.Errorf("failed to create specs directory: %w", err)
 	}
 
 	// Write the spec file
 	specPath := filepath.Join(specsDir, fmt.Sprintf("%d.md", taskID))
 	if err := os.WriteFile(specPath, []byte(spec), 0644); err != nil {
+		// Rollback: remove the task from DB
+		if rollbackErr := database.RemoveTask(int(taskID)); rollbackErr != nil {
+			return fmt.Errorf("failed to write spec file: %w (rollback also failed: %v)", err, rollbackErr)
+		}
 		return fmt.Errorf("failed to write spec file: %w", err)
 	}
 
@@ -220,6 +234,10 @@ func runTaskList(status string) error {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 	defer database.Close()
+
+	if err := database.InitSchema(); err != nil {
+		return fmt.Errorf("failed to initialize database schema: %w", err)
+	}
 
 	tasks, err := database.ListTasksByStatus(status)
 	if err != nil {
@@ -256,6 +274,10 @@ func runTaskUpdate(id int, status string) error {
 	}
 	defer database.Close()
 
+	if err := database.InitSchema(); err != nil {
+		return fmt.Errorf("failed to initialize database schema: %w", err)
+	}
+
 	if err := database.UpdateTaskStatus(id, status); err != nil {
 		return fmt.Errorf("failed to update task: %w", err)
 	}
@@ -276,14 +298,14 @@ func runTaskRemove(id int) error {
 	}
 	defer database.Close()
 
+	if err := database.InitSchema(); err != nil {
+		return fmt.Errorf("failed to initialize database schema: %w", err)
+	}
+
 	if err := database.RemoveTask(id); err != nil {
 		return fmt.Errorf("failed to remove task: %w", err)
 	}
 
 	fmt.Printf("Task %d removed.\n", id)
 	return nil
-}
-
-func init() {
-	taskListCmd.Flags().StringP("status", "s", "", "Filter tasks by status")
 }

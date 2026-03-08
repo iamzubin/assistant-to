@@ -32,7 +32,7 @@ func Open(dbPath string) (*DB, error) {
 }
 
 // InitSchema creates the necessary tables if they don't exist
-func (db *DB) InitSchema() error {
+func (d *DB) InitSchema() error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS mail (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,6 +40,8 @@ func (db *DB) InitSchema() error {
 		recipient TEXT NOT NULL,
 		subject TEXT NOT NULL,
 		body TEXT NOT NULL,
+		type TEXT DEFAULT 'status',
+		priority INTEGER DEFAULT 5,
 		is_read BOOLEAN DEFAULT FALSE,
 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -49,7 +51,8 @@ func (db *DB) InitSchema() error {
 		title TEXT NOT NULL,
 		description TEXT NOT NULL,
 		target_files TEXT,
-		status TEXT DEFAULT 'pending'
+		status TEXT DEFAULT 'pending',
+		priority INTEGER DEFAULT 3
 	);
 
 	CREATE TABLE IF NOT EXISTS events (
@@ -59,8 +62,23 @@ func (db *DB) InitSchema() error {
 		details TEXT NOT NULL,
 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS expertise (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		domain TEXT NOT NULL,
+		type TEXT NOT NULL,
+		description TEXT NOT NULL,
+		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_mail_recipient ON mail(recipient);
+	CREATE INDEX IF NOT EXISTS idx_mail_type ON mail(type);
+	CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+	CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id);
+	CREATE INDEX IF NOT EXISTS idx_expertise_domain ON expertise(domain);
+	CREATE INDEX IF NOT EXISTS idx_expertise_type ON expertise(type);
 	`
-	_, err := db.Exec(schema)
+	_, err := d.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("failed to initialize schema: %w", err)
 	}

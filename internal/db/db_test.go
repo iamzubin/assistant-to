@@ -42,7 +42,7 @@ func TestMailCRUD(t *testing.T) {
 	defer teardownTestDB(t, database, dir)
 
 	// Test SendMail
-	err := database.SendMail("agent-1", "coordinator", "Hello", "System initialized")
+	err := database.SendMail("agent-1", "coordinator", "Hello", "System initialized", MailTypeStatus, PriorityNormal)
 	if err != nil {
 		t.Fatalf("SendMail failed: %v", err)
 	}
@@ -101,27 +101,27 @@ func TestTasksCRUD(t *testing.T) {
 		t.Fatalf("Expected 1 task, got %d", len(allTasks))
 	}
 
-	if allTasks[0].Title != "Test DB" || allTasks[0].Status != "pending" {
+	if allTasks[0].Title != "Test DB" || allTasks[0].Status != TaskStatusPending {
 		t.Errorf("Unexpected task content: %+v", allTasks[0])
 	}
 
 	// Test UpdateTaskStatus
-	err = database.UpdateTaskStatus(int(taskID), "active")
+	err = database.UpdateTaskStatus(int(taskID), TaskStatusStarted)
 	if err != nil {
 		t.Fatalf("UpdateTaskStatus failed: %v", err)
 	}
 
 	// Test ListTasksByStatus (specific)
-	activeTasks, err := database.ListTasksByStatus("active")
+	startedTasks, err := database.ListTasksByStatus(TaskStatusStarted)
 	if err != nil {
-		t.Fatalf("ListTasksByStatus ('active') failed: %v", err)
+		t.Fatalf("ListTasksByStatus ('started') failed: %v", err)
 	}
 
-	if len(activeTasks) != 1 {
-		t.Fatalf("Expected 1 active task, got %d", len(activeTasks))
+	if len(startedTasks) != 1 {
+		t.Fatalf("Expected 1 started task, got %d", len(startedTasks))
 	}
-	if activeTasks[0].Status != "active" {
-		t.Errorf("Expected task status to be 'active', got '%s'", activeTasks[0].Status)
+	if startedTasks[0].Status != TaskStatusStarted {
+		t.Errorf("Expected task status to be 'started', got '%s'", startedTasks[0].Status)
 	}
 
 	pendingTasks, err := database.ListTasksByStatus("pending")
@@ -143,7 +143,31 @@ func TestTasksCRUD(t *testing.T) {
 
 	_, err = database.GetTaskByID(999)
 	if err == nil {
-		t.Errorf("Expected error for non-existent task ID")
+		t.Errorf("Expected error for non-existent task ID in GetTaskByID")
+	}
+
+	// Test UpdateTaskStatus for non-existent task
+	err = database.UpdateTaskStatus(999, TaskStatusStarted)
+	if err == nil {
+		t.Errorf("Expected error for non-existent task ID in UpdateTaskStatus")
+	}
+
+	// Test RemoveTask for non-existent task
+	err = database.RemoveTask(999)
+	if err == nil {
+		t.Errorf("Expected error for non-existent task ID in RemoveTask")
+	}
+
+	// Test successful RemoveTask
+	err = database.RemoveTask(int(taskID))
+	if err != nil {
+		t.Fatalf("RemoveTask failed: %v", err)
+	}
+
+	// Verify it's gone
+	_, err = database.GetTaskByID(int(taskID))
+	if err == nil {
+		t.Errorf("Expected error when getting removed task")
 	}
 }
 

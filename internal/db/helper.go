@@ -5,8 +5,8 @@ import (
 )
 
 // queryList is a generic helper to execute a query and map the results to a slice of type T.
-func queryList[T any](db *DB, query string, mapper func(*sql.Rows) (T, error), args ...any) ([]T, error) {
-	rows, err := db.Query(query, args...)
+func queryList[T any](d *DB, query string, mapper func(*sql.Rows) (T, error), args ...any) ([]T, error) {
+	rows, err := d.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
