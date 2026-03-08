@@ -179,6 +179,7 @@ func runInit() error {
 	dirs := []string{
 		filepath.Join(baseDir, "specs"),
 		filepath.Join(baseDir, "worktrees"),
+		filepath.Join(baseDir, "prompts"),
 	}
 
 	for _, d := range dirs {
@@ -186,6 +187,13 @@ func runInit() error {
 			return fmt.Errorf("failed to create directory %s: %w", d, err)
 		}
 		fmt.Printf("%s Created directory: %s\n", successStyle.Render("✓"), infoStyle.Render(d))
+	}
+
+	// Step 3b: Copy default prompts
+	if err := copyDefaultPrompts(filepath.Join(baseDir, "prompts")); err != nil {
+		fmt.Printf("%s Warning: failed to copy default prompts: %v\n", infoStyle.Render("!"), err)
+	} else {
+		fmt.Printf("%s Copied default prompts to: %s\n", successStyle.Render("✓"), infoStyle.Render(filepath.Join(baseDir, "prompts")))
 	}
 
 	// Step 4: Generate config.yaml
@@ -258,6 +266,78 @@ func fetchOpencodeModels() ([]string, error) {
 		}
 	}
 	return models, nil
+}
+
+// copyDefaultPrompts copies prompt files from the assistant-to binary location to the project
+func copyDefaultPrompts(destDir string) error {
+	// Try to find prompts in multiple locations
+	possiblePaths := []string{
+		// Check if we're running from the assistant-to repo
+		filepath.Join("internal", "orchestrator", "prompts"),
+		// Check relative to executable (for installed binary)
+		filepath.Join("..", "..", "internal", "orchestrator", "prompts"),
+		filepath.Join("/usr", "local", "share", "assistant-to", "prompts"),
+	}
+
+	var sourceDir string
+	for _, path := range possiblePaths {
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			sourceDir = path
+			break
+		}
+	}
+
+	if sourceDir == "" {
+		// Last resort: try to find prompts relative to current working directory
+		// assuming we might be in a subdirectory of the assistant-to repo
+		cwd, _ := os.Getwd()
+		possiblePaths = []string{
+			filepath.Join(cwd, "..", "assistant-to", "internal", "orchestrator", "prompts"),
+			filepath.Join(cwd, "..", "..", "assistant-to", "internal", "orchestrator", "prompts"),
+		}
+		for _, path := range possiblePaths {
+			if info, err := os.Stat(path); err == nil && info.IsDir() {
+				sourceDir = path
+				break
+			}
+		}
+	}
+
+	if sourceDir == "" {
+		return fmt.Errorf("could not find source prompts directory")
+	}
+
+	// Copy all .md files
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		return fmt.Errorf("failed to read source prompts: %w", err)
+	}
+
+	copied := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+
+		srcPath := filepath.Join(sourceDir, entry.Name())
+		dstPath := filepath.Join(destDir, entry.Name())
+
+		content, err := os.ReadFile(srcPath)
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %w", entry.Name(), err)
+		}
+
+		if err := os.WriteFile(dstPath, content, 0644); err != nil {
+			return fmt.Errorf("failed to write %s: %w", entry.Name(), err)
+		}
+		copied++
+	}
+
+	if copied == 0 {
+		return fmt.Errorf("no prompt files found to copy")
+	}
+
+	return nil
 }
 
 func appendToGitignore(entry string) error {
