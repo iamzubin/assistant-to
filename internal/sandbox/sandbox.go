@@ -61,6 +61,26 @@ func (t *TmuxSession) Start(ctx context.Context) error {
 }
 
 // SendInput sends keystrokes directly to the tmux session, followed by Enter
+// CaptureBuffer reads the last N lines of the tmux pane's output
+func (t *TmuxSession) CaptureBuffer(lines int) (string, error) {
+	// -p: print to stdout
+	// -t: target session
+	// -S: start line (negative for history)
+	// -E: end line
+	args := []string{"capture-pane", "-p", "-t", t.SessionName}
+	if lines > 0 {
+		args = append(args, "-S", fmt.Sprintf("-%d", lines))
+	}
+
+	cmd := exec.Command("tmux", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to capture tmux buffer for session %q: %v (output: %s)", t.SessionName, err, output)
+	}
+
+	return string(output), nil
+}
+
 func (t *TmuxSession) SendInput(keys string) error {
 	cmd := exec.Command("tmux", "send-keys", "-t", t.SessionName, keys, "C-m")
 	output, err := cmd.CombinedOutput()

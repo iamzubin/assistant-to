@@ -36,7 +36,7 @@ func runDash() error {
 	}
 	defer database.Close()
 
-	model := tui.NewDashModel(database)
+	model := tui.NewDashModel(database, root)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {

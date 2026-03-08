@@ -29,7 +29,7 @@ Running `at init` scaffolds the project root:
 ### Database Schema (`state.db`)
 
 * **`mail`**: `id`, `sender`, `recipient`, `subject`, `body`, `is_read`, `timestamp`. (The IPC message bus).
-* **`tasks`**: `id`, `title`, `description`, `target_files`, `status` (pending, active, review, complete).
+* **`tasks`**: `id`, `title`, `description`, `target_files`, `status` (`pending`, `started`, `scouted` (optional), `building`, `review`, `complete`).
 * **`events`**: `id`, `agent_id`, `event_type` (tool_call, file_write, error), `details`, `timestamp`.
 
 ---

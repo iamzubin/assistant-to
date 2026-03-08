@@ -82,13 +82,13 @@ func (c *Coordinator) Run(ctx context.Context) error {
 			continue
 		}
 
-		// Mark task as active
-		if err := c.DB.UpdateTaskStatus(task.ID, "active"); err != nil {
-			log.Printf("Coordinator: failed to mark task %s as active: %v", taskID, err)
+		// Mark task as started
+		if err := c.DB.UpdateTaskStatus(task.ID, "started"); err != nil {
+			log.Printf("Coordinator: failed to mark task %s as started: %v", taskID, err)
 		}
 
 		// Start Watchdog for this builder
-		watchdog := &Watchdog{DB: c.DB}
+		watchdog := &Watchdog{DB: c.DB, PWD: c.PWD}
 		go watchdog.MonitorHeartbeats(ctx, "builder-"+taskID)
 	}
 

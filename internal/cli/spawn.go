@@ -135,7 +135,7 @@ This simulates the orchestrator launching a task manually for testing and debugg
 			dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
 			database, err := db.Open(dbPath)
 			if err == nil {
-				database.UpdateTaskStatus(id, "active")
+				database.UpdateTaskStatus(id, "started")
 				database.Close()
 			}
 		}

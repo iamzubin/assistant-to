@@ -2,16 +2,20 @@ package orchestrator
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"assistant-to/internal/db"
+	"assistant-to/internal/sandbox"
 )
 
 // Watchdog monitors agent heartbeats and recovers stuck agents.
 type Watchdog struct {
-	DB *db.DB
+	DB  *db.DB
+	PWD string
 }
 
 // MonitorHeartbeats runs a continuous loop checking agent activity.
@@ -40,13 +44,45 @@ func (w *Watchdog) checkHeartbeat(ctx context.Context, agentID string) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	// Query the events table for the last heartbeat
+	// Query the events table for the last event and its type
 	var lastSeen time.Time
-	query := `SELECT MAX(timestamp) FROM events WHERE agent_id = ?`
-	err := w.DB.QueryRowContext(timeoutCtx, query, agentID).Scan(&lastSeen)
+	var lastType string
+	query := `SELECT timestamp, event_type FROM events WHERE agent_id = ? ORDER BY timestamp DESC LIMIT 1`
+	err := w.DB.QueryRowContext(timeoutCtx, query, agentID).Scan(&lastSeen, &lastType)
 	if err != nil {
-		// If no events found, it might be a new agent
-		return fmt.Errorf("no events found or db error: %w", err)
+		if err == sql.ErrNoRows {
+			return nil // New agent, no events yet
+		}
+		return fmt.Errorf("db error: %w", err)
+	}
+
+	// If the last event was a question, we don't consider it "stuck" yet
+	if lastType == "question" {
+		return nil
+	}
+
+	// Fallback: Scan tmux buffer for "input required" patterns
+	// This helps if the agent is blocked on a tool that doesn't explicitly log.
+	if time.Since(lastSeen) > 1*time.Minute {
+		prefix := sandbox.ProjectPrefix(w.PWD)
+		taskID := strings.TrimPrefix(agentID, "builder-")
+		sessionName := prefix + taskID
+
+		session := &sandbox.TmuxSession{SessionName: sessionName}
+		buffer, err := session.CaptureBuffer(20)
+		if err == nil {
+			// Look for common "input required" markers or question marks at the end of output
+			lowerBuf := strings.ToLower(buffer)
+			if strings.Contains(lowerBuf, "input required") ||
+				strings.Contains(lowerBuf, "enter selection") ||
+				(strings.Contains(lowerBuf, "?") && time.Since(lastSeen) > 2*time.Minute) {
+
+				log.Printf("Watchdog: Detected potential input request in tmux buffer for %s", agentID)
+				// Log a synthetic 'question' event to trigger dashboard highlights
+				w.DB.RecordEvent(agentID, "question", "Proactive Detection: Agent output suggests it is waiting for input.")
+				return nil
+			}
+		}
 	}
 
 	// Verify if 5 minutes have passed

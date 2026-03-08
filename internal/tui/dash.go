@@ -46,7 +46,13 @@ func (a agentItem) Description() string {
 	if !a.LastHeartbeat.IsZero() {
 		timeStr = fmt.Sprintf("%v ago", time.Since(a.LastHeartbeat).Round(time.Second))
 	}
-	return fmt.Sprintf("HB: %s | %s", timeStr, a.Status)
+	status := a.Status
+	if status == "WAITING FOR INPUT" {
+		status = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")).Bold(true).Render(status)
+	} else if strings.HasPrefix(status, "stuck") {
+		status = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Bold(true).Render(status)
+	}
+	return fmt.Sprintf("HB: %s | %s", timeStr, status)
 }
 func (a agentItem) FilterValue() string { return a.SessionName }
 
@@ -58,7 +64,11 @@ type feedItem struct {
 }
 
 func (f feedItem) Title() string {
-	return fmt.Sprintf("[%s] %s | %s", f.Timestamp.Format("15:04:05"), f.AgentID, f.EventType)
+	typeStr := f.EventType
+	if typeStr == "question" {
+		typeStr = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF00FF")).Bold(true).Render(typeStr)
+	}
+	return fmt.Sprintf("[%s] %s | %s", f.Timestamp.Format("15:04:05"), f.AgentID, typeStr)
 }
 func (f feedItem) Description() string { return f.Details }
 func (f feedItem) FilterValue() string {
@@ -70,10 +80,11 @@ func (f feedItem) FilterValue() string {
 // ---------------------------------------------------------
 
 type dashModel struct {
-	db     *db.DB
-	width  int
-	height int
-	ready  bool
+	db          *db.DB
+	projectRoot string
+	width       int
+	height      int
+	ready       bool
 
 	// Components
 	taskList  list.Model
@@ -101,7 +112,7 @@ type dashModel struct {
 
 type tickMsg time.Time
 
-func NewDashModel(database *db.DB) tea.Model {
+func NewDashModel(database *db.DB, projectRoot string) tea.Model {
 
 	tList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	tList.Title = "Task Board"
@@ -117,6 +128,7 @@ func NewDashModel(database *db.DB) tea.Model {
 
 	m := dashModel{
 		db:             database,
+		projectRoot:    projectRoot,
 		taskList:       tList,
 		agentList:      aList,
 		feedList:       fList,
@@ -246,7 +258,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.activePane == 1 {
 				if i, ok := m.agentList.SelectedItem().(agentItem); ok {
-					pwd, _ := os.Getwd()
+					pwd := m.projectRoot
 					fullSession := sandbox.ProjectPrefix(pwd) + i.SessionName
 
 					tmuxCmd := "attach-session"
@@ -375,7 +387,7 @@ func (m *dashModel) refreshData() {
 	tasks, err := m.db.ListTasksByStatus("")
 	if err == nil {
 		sort.Slice(tasks, func(i, j int) bool {
-			order := map[string]int{"active": 0, "review": 1, "pending": 2, "complete": 3}
+			order := map[string]int{"started": 0, "scouted": 1, "building": 2, "review": 3, "pending": 4, "complete": 5}
 			return order[tasks[i].Status] < order[tasks[j].Status]
 		})
 
@@ -391,7 +403,7 @@ func (m *dashModel) refreshData() {
 	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
 	out, err := cmd.Output()
 
-	pwd, _ := os.Getwd()
+	pwd := m.projectRoot
 	prefix := sandbox.ProjectPrefix(pwd)
 
 	// Add mock agents directly from DB if any exist (used for testing without tmux)
@@ -401,18 +413,25 @@ func (m *dashModel) refreshData() {
 			agentItems = append(agentItems, agentItem{AgentStatus{"mock-builder", time.Now(), "mock (healthy)"}})
 			agentItems = append(agentItems, agentItem{AgentStatus{"mock-coordinator", time.Now().Add(-10 * time.Minute), "mock (stuck)"}})
 		}
-	} else if err == nil {
+	} else {
 		sessions := strings.Split(strings.TrimSpace(string(out)), "\n")
 		for _, s := range sessions {
 			s = strings.TrimSpace(s)
 			if strings.HasPrefix(s, prefix) {
 				fullAgentID := s
 				displayName := strings.TrimPrefix(s, prefix)
-				lastSeen, hbErr := m.db.GetLastHeartbeat(fullAgentID)
+
+				// Get last event and its type
+				var lastSeen time.Time
+				var lastType string
+				query := "SELECT timestamp, event_type FROM events WHERE agent_id = ? ORDER BY timestamp DESC LIMIT 1"
+				err := m.db.QueryRow(query, fullAgentID).Scan(&lastSeen, &lastType)
 
 				status := "healthy"
-				if hbErr == nil && !lastSeen.IsZero() {
-					if time.Since(lastSeen) > 5*time.Minute {
+				if err == nil && !lastSeen.IsZero() {
+					if lastType == "question" {
+						status = "WAITING FOR INPUT"
+					} else if time.Since(lastSeen) > 5*time.Minute {
 						status = "stuck (>5m)"
 					}
 				} else {

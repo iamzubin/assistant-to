@@ -64,7 +64,11 @@ var mailListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List messages in the mailbox",
 	Run: func(cmd *cobra.Command, args []string) {
-		pwd, _ := os.Getwd()
+		pwd, err := findProjectRoot()
+		if err != nil {
+			fmt.Printf("Failed to find project root: %v\n", err)
+			os.Exit(1)
+		}
 		dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
 		database, err := db.Open(dbPath)
 		if err != nil {

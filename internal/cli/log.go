@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var eventType string
+
 var logCmd = &cobra.Command{
 	Use:   "log <message>",
 	Short: "Record an event to the global timeline",
@@ -35,8 +37,8 @@ var logCmd = &cobra.Command{
 			agentID = "Unknown"
 		}
 
-		query := `INSERT INTO events (agent_id, event_type, details) VALUES (?, 'log', ?)`
-		_, err = database.Exec(query, agentID, message)
+		query := `INSERT INTO events (agent_id, event_type, details) VALUES (?, ?, ?)`
+		_, err = database.Exec(query, agentID, eventType, message)
 		if err != nil {
 			fmt.Printf("Failed to write log: %v\n", err)
 			os.Exit(1)
@@ -47,5 +49,6 @@ var logCmd = &cobra.Command{
 }
 
 func init() {
+	logCmd.Flags().StringVarP(&eventType, "type", "t", "log", "Type of event (log, question, error, etc.)")
 	RootCmd.AddCommand(logCmd)
 }

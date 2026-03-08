@@ -23,8 +23,9 @@ directly inside your worktree. Do not call `at start`, `at spawn`, or any worktr
 management commands. 
 
 ```sh
-# Log a status update visible on the dashboard
+# Log a status update or question visible on the dashboard
 at log "Implemented the token refresh flow in auth/refresh.go"
+at log --type question "Clarification: Should I support Postgres or only SQLite?"
 
 # Messaging (Check your mail again and again!)
 at mail list
