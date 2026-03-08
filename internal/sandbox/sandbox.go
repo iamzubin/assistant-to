@@ -28,7 +28,9 @@ func ProjectPrefix(pwd string) string {
 type TmuxSession struct {
 	SessionName string
 	WorktreeDir string
-	Command     string // Optional command to execute inside the session
+	Command     string            // Optional command to execute inside the session
+	EnvVars     map[string]string // Environment variables to set in the session
+	ReadOnly    bool              // If true, sets up read-only environment guards
 }
 
 // Start spawns a detached tmux session locked to the worktree directory.
@@ -57,7 +59,47 @@ func (t *TmuxSession) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start tmux session %q: %v (output: %s)", t.SessionName, err, output)
 	}
 
+	// Set environment variables if provided
+	if t.EnvVars != nil {
+		for key, value := range t.EnvVars {
+			envCmd := exec.Command("tmux", "set-environment", "-t", t.SessionName, key, value)
+			if err := envCmd.Run(); err != nil {
+				// Log but don't fail - not critical
+				fmt.Printf("Warning: failed to set env var %s: %v\n", key, err)
+			}
+		}
+	}
+
+	// Set up read-only environment guards if enabled
+	if t.ReadOnly {
+		t.setupReadOnlyGuards()
+	}
+
 	return nil
+}
+
+// setupReadOnlyGuards configures environment to prevent file writes
+func (t *TmuxSession) setupReadOnlyGuards() {
+	// Set environment variables that tools might respect
+	readOnlyEnv := map[string]string{
+		"AT_READ_ONLY":   "1",
+		"READ_ONLY_MODE": "1",
+		"EDITOR":         "cat", // Prevent editors from opening
+		"GIT_EDITOR":     "cat", // Prevent git from opening editor
+	}
+
+	for key, value := range readOnlyEnv {
+		cmd := exec.Command("tmux", "set-environment", "-t", t.SessionName, key, value)
+		cmd.Run() // Ignore errors, best effort
+	}
+
+	// Send a warning message to the session
+	warning := "\n╔════════════════════════════════════════════════════════════╗\n" +
+		"║  READ-ONLY MODE ENABLED                                    ║\n" +
+		"║  This agent is in exploration mode. File writes are        ║\n" +
+		"║  discouraged. Use 'at mail' to report findings.            ║\n" +
+		"╚════════════════════════════════════════════════════════════╝\n"
+	t.SendKeys(warning)
 }
 
 // SendInput sends keystrokes directly to the tmux session, followed by Enter

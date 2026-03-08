@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -92,13 +93,55 @@ func (r *Resolver) AttemptResolution() (*ResolutionResult, error) {
 
 // attemptMechanicalMerge tries a standard git merge
 func (r *Resolver) attemptMechanicalMerge() (*ResolutionResult, error) {
-	// Implementation would use git commands
-	// For now, return as not successful to proceed to next tier
+	// Check if there are any changes to merge
+	statusCmd := exec.Command("git", "-C", r.WorktreeDir, "status", "--porcelain")
+	statusOut, err := statusCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to check git status: %w", err)
+	}
+
+	if len(statusOut) == 0 {
+		// No changes, nothing to merge
+		return &ResolutionResult{
+			Tier:     Tier1Mechanical,
+			Success:  true,
+			Message:  "No changes to merge",
+			Strategy: "no_changes",
+		}, nil
+	}
+
+	// Try git merge --no-edit
+	mergeCmd := exec.Command("git", "-C", r.WorktreeDir, "merge", "--no-edit", r.BaseBranch)
+	mergeOut, err := mergeCmd.CombinedOutput()
+
+	if err == nil {
+		// Merge succeeded
+		return &ResolutionResult{
+			Tier:     Tier1Mechanical,
+			Success:  true,
+			Message:  "Mechanical merge succeeded",
+			Strategy: "git_merge",
+		}, nil
+	}
+
+	// Merge failed, check for conflicts
+	if strings.Contains(string(mergeOut), "conflict") || strings.Contains(string(mergeOut), "CONFLICT") {
+		conflicts, _ := r.detectConflicts()
+		return &ResolutionResult{
+			Tier:      Tier1Mechanical,
+			Success:   false,
+			Message:   fmt.Sprintf("Merge conflicts detected: %v", conflicts),
+			Conflicts: conflicts,
+			Strategy:  "git_merge_conflicts",
+		}, nil
+	}
+
+	// Some other error
 	return &ResolutionResult{
 		Tier:     Tier1Mechanical,
 		Success:  false,
-		Message:  "Mechanical merge would be attempted here",
-		Strategy: "git_merge",
+		Message:  fmt.Sprintf("Merge failed: %s", string(mergeOut)),
+		Strategy: "git_merge_failed",
 	}, nil
 }
 
@@ -158,31 +201,100 @@ func (r *Resolver) attemptAlgorithmicSynthesis() (*ResolutionResult, error) {
 
 // attemptContextualRebase tries to rebase onto latest base branch
 func (r *Resolver) attemptContextualRebase() (*ResolutionResult, error) {
-	// Implementation would attempt automatic rebase
+	// Abort any ongoing merge first
+	exec.Command("git", "-C", r.WorktreeDir, "merge", "--abort").Run()
+
+	// Try to rebase
+	rebaseCmd := exec.Command("git", "-C", r.WorktreeDir, "rebase", r.BaseBranch)
+	rebaseOut, err := rebaseCmd.CombinedOutput()
+
+	if err == nil {
+		return &ResolutionResult{
+			Tier:     Tier3Rebase,
+			Success:  true,
+			Message:  "Rebase succeeded",
+			Strategy: "git_rebase",
+		}, nil
+	}
+
+	// Rebase failed, abort it
+	exec.Command("git", "-C", r.WorktreeDir, "rebase", "--abort").Run()
+
 	return &ResolutionResult{
 		Tier:     Tier3Rebase,
 		Success:  false,
-		Message:  "Contextual rebase would be attempted here",
-		Strategy: "git_rebase",
+		Message:  fmt.Sprintf("Rebase failed: %s", string(rebaseOut)),
+		Strategy: "git_rebase_failed",
 	}, nil
 }
 
-// attemptAIAssistedResolution spawns a Merger agent
+// attemptAIAssistedResolution prepares context for AI-assisted resolution
 func (r *Resolver) attemptAIAssistedResolution() (*ResolutionResult, error) {
-	// Implementation would spawn Merger agent
+	conflicts, err := r.detectConflicts()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(conflicts) == 0 {
+		return &ResolutionResult{
+			Tier:     Tier4AIAssisted,
+			Success:  false,
+			Message:  "No conflicts to resolve",
+			Strategy: "no_conflicts",
+		}, nil
+	}
+
+	// Collect diffs for each conflicted file
+	var diffContext strings.Builder
+	for _, conflict := range conflicts {
+		cmd := exec.Command("git", "-C", r.WorktreeDir, "diff", r.BaseBranch, "--", conflict)
+		out, _ := cmd.Output()
+		if len(out) > 0 {
+			diffContext.WriteString(fmt.Sprintf("\n=== %s ===\n", conflict))
+			diffContext.WriteString(string(out))
+		}
+	}
+
+	// Return with conflict info - actual AI resolution handled by ai_resolve.go
 	return &ResolutionResult{
-		Tier:     Tier4AIAssisted,
-		Success:  false,
-		Message:  "AI-assisted resolution would be attempted here",
-		Strategy: "merger_agent",
+		Tier:      Tier4AIAssisted,
+		Success:   false, // Will be handled separately by AI resolver
+		Message:   fmt.Sprintf("AI resolution needed for %d files", len(conflicts)),
+		Conflicts: conflicts,
+		Strategy:  "merger_agent",
 	}, nil
 }
 
-// detectConflicts identifies files with merge conflicts
+// detectConflicts identifies files with merge conflicts using git
 func (r *Resolver) detectConflicts() ([]string, error) {
-	// This would run git diff --name-only --diff-filter=U
-	// For now, return empty
-	return []string{}, nil
+	// Use git diff to find unmerged files
+	cmd := exec.Command("git", "-C", r.WorktreeDir, "diff", "--name-only", "--diff-filter=U")
+	out, err := cmd.Output()
+	if err != nil {
+		// If command fails, try alternative approach
+		cmd = exec.Command("git", "-C", r.WorktreeDir, "status", "--porcelain")
+		out, err = cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("failed to detect conflicts: %w", err)
+		}
+
+		// Parse status output for unmerged files (UU = both modified)
+		var conflicts []string
+		lines := strings.Split(string(out), "\n")
+		for _, line := range lines {
+			if len(line) > 3 && strings.HasPrefix(line, "UU ") {
+				conflicts = append(conflicts, strings.TrimSpace(line[3:]))
+			}
+		}
+		return conflicts, nil
+	}
+
+	if len(out) == 0 {
+		return []string{}, nil
+	}
+
+	files := strings.Split(strings.TrimSpace(string(out)), "\n")
+	return files, nil
 }
 
 // getSynthesisStrategy returns the appropriate synthesis strategy for a file

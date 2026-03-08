@@ -266,6 +266,294 @@ This document tracks the implementation status of features defined in SPEC.md, o
 
 ---
 
+## 🆕 Additional Tasks from SPEC.md Gap Analysis
+
+### 21. AT_INSTRUCTIONS.md Spec Generation ✅ COMPLETED
+**Files:** `internal/cli/task.go` (enhanced)
+**Status:** COMPLETED
+**Implementation:**
+- ✅ Updated `at task add` to generate proper AT_INSTRUCTIONS.md format
+- ✅ Includes task metadata (ID, difficulty, target files)
+- ✅ Integrates code intelligence context (if index exists)
+- ✅ Includes relevant expertise from database
+- ✅ Uses PromptComposer for rich spec generation (with fallback)
+- ✅ Adds completion criteria and next steps
+
+### 22. Implement Scout Agent (Read-Only Exploration) ✅ COMPLETED
+**Files:** `internal/orchestrator/coordinator.go`, `internal/sandbox/sandbox.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ Scout prompt exists at `internal/orchestrator/prompts/scout.md`
+- ✅ `spawnScout()` method in coordinator spawns Scout agents with read-only environment
+- ✅ `shouldSpawnScout()` determines if task needs Scout (complex keywords or multi-directory)
+- ✅ `waitForScoutAndSpawnBuilder()` waits for Scout completion before spawning Builder
+- ✅ Environment guards: `AT_READ_ONLY=1`, `READ_ONLY_MODE=1`, read-only warning displayed
+- ✅ Scout reports findings via mail system and creates `.scout_complete` file
+- ✅ Timeout handling (10 min) - proceeds with Builder if Scout hangs
+
+### 23. Implement Reviewer Agent (Read-Only Validation)
+**Files:** `internal/orchestrator/coordinator.go`, `internal/cli/spawn.go`
+**Status:** NOT STARTED
+**Required by Spec:** Reviewer agent for validation
+**Implementation:**
+- Create Reviewer role with read-only access
+- Spawn after Builder completes for code review
+- Can only read worktree, not modify
+- Reports findings via mail system
+
+### 24. Role-Specific Guards
+**Files:** `internal/sandbox/sandbox.go`, `internal/orchestrator/coordinator.go`
+**Status:** NOT STARTED
+**Required by Spec:** Mechanical guards per role
+**Implementation:**
+- Coordinator: Shell hooks to monitor file system
+- Scout: Environment blocks to prevent writes ✅ (basic implementation)
+- Builder: Restricted git push permissions
+- Reviewer: Read-only worktree access only
+
+---
+
+## ✅ Completed Enhancements
+
+### 25. Enhanced Configuration System ✅ COMPLETED
+**Files:** `internal/config/config.go`, `internal/cli/init.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ Expanded config structure with project, agents, worktrees, mulch, merge, watchdog, logging sections
+- ✅ Added `agents.scoutEnabled` flag to disable Scout agent
+- ✅ Added `agents.scoutWaitSec` to configure Scout timeout (default: 600s)
+- ✅ Sensible defaults for all fields
+- ✅ Backward compatibility with old configs
+
+**Example config.yaml:**
+```yaml
+# Assistant-to Configuration
+tool: gemini
+model_large: gemini-2.5-pro
+model_medium: gemini-2.5-flash
+model_fast: gemini-2.5-flash-lite
+
+project:
+  name: myproject
+  root: .
+  canonicalBranch: main
+
+agents:
+  manifestPath: .assistant-to/agent-manifest.json
+  baseDir: .assistant-to/agent-defs
+  maxConcurrent: 5
+  staggerDelayMs: 2000
+  maxDepth: 2
+  scoutEnabled: true
+  scoutWaitSec: 600
+
+worktrees:
+  baseDir: .assistant-to/worktrees
+
+taskTracker:
+  enabled: true
+
+mulch:
+  enabled: true
+  domains: []
+  primeFormat: markdown
+
+merge:
+  aiResolveEnabled: true
+  reimagineEnabled: false
+
+watchdog:
+  tier0Enabled: true
+  tier0IntervalMs: 30000
+  tier1Enabled: true
+  tier2Enabled: true
+  staleThresholdMs: 300000
+  zombieThresholdMs: 600000
+  nudgeIntervalMs: 60000
+  recoveryWaitTime: 5
+  escapeKeyCount: 2
+  maxRecoveryAttempts: 3
+
+logging:
+  verbose: false
+  redactSecrets: true
+```
+
+### 26. Automated Init with Flags ✅ COMPLETED
+**Files:** `internal/cli/init.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ `--tool` - Select orchestrator tool (gemini, opencode)
+- ✅ `--model-large`, `--model-medium`, `--model-fast` - Model selection
+- ✅ `--project-name` - Project name
+- ✅ `--branch` - Canonical branch (default: main)
+- ✅ `--max-agents` - Max concurrent agents (default: 5)
+- ✅ `--scout` - Enable/disable Scout (default: true)
+- ✅ `--non-interactive` - Skip all prompts (use with other flags)
+
+**Usage examples:**
+```bash
+# Non-interactive with all flags
+at init --tool=gemini --model-large=gemini-2.5-pro --non-interactive
+
+# CI/CD automation
+at init --tool=opencode --project-name=myapp --max-agents=10 --non-interactive
+
+# Partial automation (interactive for missing values)
+at init --tool=gemini --project-name=myapp
+```
+
+---
+
+## ✅ Critical Features Wired Up
+
+### 27. Logging System with Verbosity ✅ COMPLETED
+**Files:** `internal/config/logger.go`, `internal/orchestrator/coordinator.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ `config.InitLogging()` initializes logging from config
+- ✅ Log levels: ERROR, WARN, INFO, DEBUG
+- ✅ `config.Info()`, `config.Debug()`, `config.Error()`, `config.Warn()` methods
+- ✅ Respects `logging.verbose` flag - DEBUG only shown when verbose=true
+- ✅ Basic secret redaction (api_key, token, password, etc.)
+- ✅ Coordinator initializes logging on startup
+
+**Example:**
+```yaml
+logging:
+  verbose: true  # Enable debug logging
+  redactSecrets: true
+```
+
+### 28. Max Concurrent Agents Enforcement ✅ COMPLETED
+**Files:** `internal/orchestrator/coordinator.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ Semaphore-based concurrency control
+- ✅ Respects `agents.maxConcurrent` config (default: 5)
+- ✅ Blocks when max agents reached, continues as agents complete
+- ✅ Releases slot when agent/watchdog finishes
+
+**Example:**
+```yaml
+agents:
+  maxConcurrent: 10  # Max 10 agents running simultaneously
+```
+
+### 29. Stagger Delay Between Agent Spawns ✅ COMPLETED
+**Files:** `internal/orchestrator/coordinator.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ Configurable delay between agent spawns
+- ✅ Respects `agents.staggerDelayMs` (default: 2000ms)
+- ✅ Prevents thundering herd on startup
+
+**Example:**
+```yaml
+agents:
+  staggerDelayMs: 5000  # 5 second delay between spawns
+```
+
+### 30. Watchdog Tier Enable/Disable ✅ COMPLETED
+**Files:** `internal/orchestrator/watchdog.go`, `internal/orchestrator/coordinator.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ `watchdog.tier0Enabled` - Mechanical checks (session, PID)
+- ✅ `watchdog.tier1Enabled` - AI Triage (transcript analysis)
+- ✅ `watchdog.tier2Enabled` - Monitor Agent (drift detection)
+- ✅ Each tier can be independently enabled/disabled
+- ✅ Tier 1 only initialized if enabled
+- ✅ Tier 2 only started if enabled
+
+**Example:**
+```yaml
+watchdog:
+  tier0Enabled: true   # Basic health checks
+  tier1Enabled: false  # Disable AI triage
+  tier2Enabled: true   # Keep drift detection
+```
+
+---
+
+## ✅ Additional Wired Features
+
+### 31. Zombie Detection ✅ COMPLETED
+**Files:** `internal/orchestrator/watchdog.go`, `internal/config/config.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ `watchdog.zombieThresholdMs` config field now used (default: 10 minutes)
+- ✅ Zombie detection triggers when agent unresponsive longer than threshold
+- ✅ Escalates with `zombie_escalation` event and priority mail
+- ✅ `GetZombieThreshold()` helper returns configured duration
+
+**Example:**
+```yaml
+watchdog:
+  zombieThresholdMs: 600000  # 10 minutes before zombie detection
+```
+
+### 32. Event Type Constants ✅ COMPLETED
+**Files:** `internal/constants/events.go`, `internal/orchestrator/watchdog.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ Added missing event type constants: EventTypeTmuxUnresponsive, EventTypePIDCheckFailed, EventTypeProcessDead, EventTypeQuestion, EventTypeZombieDetected, EventTypeZombieEscalation, EventTypeMaxRecoveryExceeded, EventTypeTriageTriggered, EventTypeTriageError, EventTypeMonitorStarted, EventTypeMonitorStopped
+- ✅ All `RecordEvent()` calls now use constants instead of string literals
+- ✅ Consistent event naming across codebase
+
+### 33. Mechanical Git Merge ✅ COMPLETED
+**Files:** `internal/merge/resolver.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ `attemptMechanicalMerge()` now runs actual `git merge --no-edit`
+- ✅ Detects success vs conflicts
+- ✅ Returns conflict list on failure
+- ✅ Uses `git status --porcelain` to check for changes
+
+### 34. Conflict Detection ✅ COMPLETED
+**Files:** `internal/merge/resolver.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ `detectConflicts()` runs `git diff --name-only --diff-filter=U`
+- ✅ Fallback to parsing `git status --porcelain` for UU (unmerged) files
+- ✅ Returns list of conflicted file paths
+- ✅ Used by all merge tiers
+
+### 35. Contextual Rebase ✅ COMPLETED
+**Files:** `internal/merge/resolver.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ `attemptContextualRebase()` runs actual `git rebase`
+- ✅ Aborts any ongoing merge first
+- ✅ Aborts rebase on failure to restore clean state
+- ✅ Returns success/failure with detailed message
+
+### 36. AI-Assisted Resolution Preparation ✅ COMPLETED
+**Files:** `internal/merge/resolver.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ `attemptAIAssistedResolution()` detects conflicts using git
+- ✅ Collects diff context for each conflicted file
+- ✅ Returns conflict list and strategy for `ai_resolve.go`
+- ✅ Prepares data for Merger agent
+
+### 37. Prime Format Configuration ✅ COMPLETED
+**Files:** `internal/config/config.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ `GetPrimeFormat()` returns configured format (default: "markdown")
+- ✅ Ready for use in `at prime` command output formatting
+- ✅ Config field: `mulch.primeFormat`
+
+### 38. Reimagine Merge Flag ✅ COMPLETED
+**Files:** `internal/config/config.go`
+**Status:** COMPLETED
+**Implementation:**
+- ✅ `IsReimagineEnabled()` returns `merge.reimagineEnabled` value
+- ✅ Flag available for future reimagine merge strategy implementation
+- ✅ Default: false
+
+---
+
 ## 🎯 Recommended Implementation Order
 
 1. **Start with database schema updates** (Items 1-3) - Required foundation

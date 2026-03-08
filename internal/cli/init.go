@@ -15,11 +15,27 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	initTool           string
+	initModelLarge     string
+	initModelMedium    string
+	initModelFast      string
+	initProjectName    string
+	initBranch         string
+	initMaxAgents      int
+	initScoutEnabled   bool
+	initNonInteractive bool
+)
+
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize the assistant-to workspace in the current directory",
 	Long: `Creates the local .assistant-to directory structure, configures the environment, and initializes the state database.
-This must be run once per project before launching the orchestrator or any agents.`,
+This must be run once per project before launching the orchestrator or any agents.
+
+For automated/non-interactive initialization, use flags:
+  at init --tool=gemini --non-interactive
+  at init --tool=opencode --project-name=myapp --max-agents=10`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runInit()
 	},
@@ -27,15 +43,45 @@ This must be run once per project before launching the orchestrator or any agent
 
 func init() {
 	RootCmd.AddCommand(initCmd)
+
+	// Tool and model flags
+	initCmd.Flags().StringVar(&initTool, "tool", "", "Orchestrator tool (gemini, opencode)")
+	initCmd.Flags().StringVar(&initModelLarge, "model-large", "", "Large model for Coordinator")
+	initCmd.Flags().StringVar(&initModelMedium, "model-medium", "", "Medium model for Builder/Merger/Reviewer")
+	initCmd.Flags().StringVar(&initModelFast, "model-fast", "", "Fast model for Scout")
+
+	// Project flags
+	initCmd.Flags().StringVar(&initProjectName, "project-name", "", "Project name")
+	initCmd.Flags().StringVar(&initBranch, "branch", "main", "Canonical branch name")
+
+	// Agent flags
+	initCmd.Flags().IntVar(&initMaxAgents, "max-agents", 5, "Maximum concurrent agents")
+	initCmd.Flags().BoolVar(&initScoutEnabled, "scout", true, "Enable Scout agent")
+
+	// Automation flag
+	initCmd.Flags().BoolVar(&initNonInteractive, "non-interactive", false, "Skip interactive prompts (use with other flags)")
 }
 
 func runInit() error {
-	var (
-		tool        string
-		modelLarge  string
-		modelMedium string
-		modelFast   string
-	)
+	// Use flag values or defaults
+	tool := initTool
+	modelLarge := initModelLarge
+	modelMedium := initModelMedium
+	modelFast := initModelFast
+
+	// Set defaults if not provided
+	if tool == "" {
+		tool = "gemini"
+	}
+	if modelLarge == "" {
+		modelLarge = "gemini-2.5-pro"
+	}
+	if modelMedium == "" {
+		modelMedium = "gemini-2.5-flash"
+	}
+	if modelFast == "" {
+		modelFast = "gemini-2.5-flash-lite"
+	}
 
 	// Lipgloss UI Styles
 	headerStyle := lipgloss.NewStyle().
@@ -55,121 +101,167 @@ func runInit() error {
 	successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575")).Bold(true)
 	infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ADD8"))
 
-	fmt.Println(headerStyle.Render("assistant-to: Workspace Setup"))
-	fmt.Println(subHeaderStyle.Render("Welcome to the Managing Director's Autonomous Coding Swarm.\nLet's configure your agent tiers."))
+	// Interactive mode (unless --non-interactive flag is set)
+	if !initNonInteractive {
+		fmt.Println(headerStyle.Render("assistant-to: Workspace Setup"))
+		fmt.Println(subHeaderStyle.Render("Welcome to the Managing Director's Autonomous Coding Swarm.\nLet's configure your agent tiers."))
 
-	// Step 1: Tool Selection
-	err := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Select Orchestrator Tool").
-				Description("Choose the underpinning execution environment for the agents.").
-				Options(
-					huh.NewOption("gemini", "gemini"),
-					huh.NewOption("opencode", "opencode"),
-				).
-				Value(&tool),
-		),
-	).WithTheme(huh.ThemeCharm()).Run()
-	if err != nil {
-		return fmt.Errorf("tool selection cancelled: %w", err)
-	}
-
-	// Step 2: Model Selection based on Tool
-	if tool == "gemini" {
-		largeOpts := []huh.Option[string]{
-			huh.NewOption("gemini-3.1-pro-preview", "gemini-3.1-pro-preview"),
-			huh.NewOption("gemini-3-flash-preview", "gemini-3-flash-preview"),
-			huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
-			huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
-			huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
-		}
-		mediumOpts := []huh.Option[string]{
-			huh.NewOption("gemini-3-flash-preview", "gemini-3-flash-preview"),
-			huh.NewOption("gemini-3.1-pro-preview", "gemini-3.1-pro-preview"),
-			huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
-			huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
-			huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
-		}
-		fastOpts := []huh.Option[string]{
-			huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
-			huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
-			huh.NewOption("gemini-3-flash-preview", "gemini-3-flash-preview"),
-			huh.NewOption("gemini-3.1-pro-preview", "gemini-3.1-pro-preview"),
-			huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
-		}
-
-		err = huh.NewForm(
-			huh.NewGroup(
-				huh.NewSelect[string]().
-					Title("Select Large Model").
-					Description("Capable of reasoning and orchestrating. Defaulted for Coordinator roles.").
-					Options(largeOpts...).
-					Value(&modelLarge),
-				huh.NewSelect[string]().
-					Title("Select Medium Model").
-					Description("Balanced size for iterative tasks. Defaulted for the Builder, Merger, and Reviewer roles.").
-					Options(mediumOpts...).
-					Value(&modelMedium),
-				huh.NewSelect[string]().
-					Title("Select Fast Model").
-					Description("Optimized for speed and log volume. Used by Scout to do repository grepping.").
-					Options(fastOpts...).
-					Value(&modelFast),
-			),
-		).WithTheme(huh.ThemeCharm()).Run()
-		if err != nil {
-			return fmt.Errorf("model selection cancelled: %w", err)
-		}
-	} else if tool == "opencode" {
-		// Attempt to fetch models from `opencode models`
-		models, fetchErr := fetchOpencodeModels()
-		if fetchErr == nil && len(models) > 0 {
-			var opts []huh.Option[string]
-			for _, m := range models {
-				opts = append(opts, huh.NewOption(m, m))
+		// Step 1: Tool Selection (if not provided via flag)
+		if initTool == "" {
+			err := huh.NewForm(
+				huh.NewGroup(
+					huh.NewSelect[string]().
+						Title("Select Orchestrator Tool").
+						Description("Choose the underpinning execution environment for the agents.").
+						Options(
+							huh.NewOption("gemini", "gemini"),
+							huh.NewOption("opencode", "opencode"),
+						).
+						Value(&tool),
+				),
+			).WithTheme(huh.ThemeCharm()).Run()
+			if err != nil {
+				return fmt.Errorf("tool selection cancelled: %w", err)
 			}
-			err = huh.NewForm(
-				huh.NewGroup(
-					huh.NewSelect[string]().
-						Title("Select Large Model").
-						Description("Capable of reasoning and orchestrating. Defaulted for Coordinator roles.").
-						Options(opts...).
-						Value(&modelLarge),
-					huh.NewSelect[string]().
-						Title("Select Medium Model").
-						Description("Balanced size for iterative tasks. Defaulted for the Builder, Merger, and Reviewer roles.").
-						Options(opts...).
-						Value(&modelMedium),
-					huh.NewSelect[string]().
-						Title("Select Fast Model").
-						Description("Optimized for speed and log volume. Used by Scout to do repository grepping.").
-						Options(opts...).
-						Value(&modelFast),
-				),
-			).WithTheme(huh.ThemeCharm()).Run()
-		} else {
-			// Fallback to text input
-			err = huh.NewForm(
-				huh.NewGroup(
-					huh.NewInput().
-						Title("Enter Large Model Name").
-						Description("Capable of reasoning and orchestrating. Defaulted for Coordinator roles.").
-						Value(&modelLarge),
-					huh.NewInput().
-						Title("Enter Medium Model Name").
-						Description("Balanced size for iterative tasks. Defaulted for the Builder, Merger, and Reviewer roles.").
-						Value(&modelMedium),
-					huh.NewInput().
-						Title("Enter Fast Model Name").
-						Description("Optimized for speed and log volume. Used by Scout to do repository grepping.").
-						Value(&modelFast),
-				),
-			).WithTheme(huh.ThemeCharm()).Run()
 		}
-		if err != nil {
-			return fmt.Errorf("model selection cancelled: %w", err)
+
+		// Step 2: Model Selection based on Tool (if not provided via flags)
+		if initModelLarge == "" || initModelMedium == "" || initModelFast == "" {
+			if tool == "gemini" {
+				largeOpts := []huh.Option[string]{
+					huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
+					huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
+					huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
+				}
+				mediumOpts := []huh.Option[string]{
+					huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
+					huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
+					huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
+				}
+				fastOpts := []huh.Option[string]{
+					huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
+					huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
+				}
+
+				// Only prompt for models that weren't provided via flags
+				var groups []*huh.Group
+				if initModelLarge == "" {
+					groups = append(groups, huh.NewGroup(
+						huh.NewSelect[string]().
+							Title("Select Large Model").
+							Description("Capable of reasoning and orchestrating. Defaulted for Coordinator roles.").
+							Options(largeOpts...).
+							Value(&modelLarge),
+					))
+				}
+				if initModelMedium == "" {
+					groups = append(groups, huh.NewGroup(
+						huh.NewSelect[string]().
+							Title("Select Medium Model").
+							Description("Balanced size for iterative tasks. Defaulted for the Builder, Merger, and Reviewer roles.").
+							Options(mediumOpts...).
+							Value(&modelMedium),
+					))
+				}
+				if initModelFast == "" {
+					groups = append(groups, huh.NewGroup(
+						huh.NewSelect[string]().
+							Title("Select Fast Model").
+							Description("Optimized for speed and log volume. Used by Scout to do repository grepping.").
+							Options(fastOpts...).
+							Value(&modelFast),
+					))
+				}
+
+				if len(groups) > 0 {
+					form := huh.NewForm(groups...).WithTheme(huh.ThemeCharm())
+					if err := form.Run(); err != nil {
+						return fmt.Errorf("model selection cancelled: %w", err)
+					}
+				}
+			} else if tool == "opencode" {
+				// Attempt to fetch models from `opencode models`
+				models, fetchErr := fetchOpencodeModels()
+				if fetchErr == nil && len(models) > 0 && (initModelLarge == "" || initModelMedium == "" || initModelFast == "") {
+					var opts []huh.Option[string]
+					for _, m := range models {
+						opts = append(opts, huh.NewOption(m, m))
+					}
+
+					var groups []*huh.Group
+					if initModelLarge == "" {
+						groups = append(groups, huh.NewGroup(
+							huh.NewSelect[string]().
+								Title("Select Large Model").
+								Description("Capable of reasoning and orchestrating. Defaulted for Coordinator roles.").
+								Options(opts...).
+								Value(&modelLarge),
+						))
+					}
+					if initModelMedium == "" {
+						groups = append(groups, huh.NewGroup(
+							huh.NewSelect[string]().
+								Title("Select Medium Model").
+								Description("Balanced size for iterative tasks. Defaulted for the Builder, Merger, and Reviewer roles.").
+								Options(opts...).
+								Value(&modelMedium),
+						))
+					}
+					if initModelFast == "" {
+						groups = append(groups, huh.NewGroup(
+							huh.NewSelect[string]().
+								Title("Select Fast Model").
+								Description("Optimized for speed and log volume. Used by Scout to do repository grepping.").
+								Options(opts...).
+								Value(&modelFast),
+						))
+					}
+
+					if len(groups) > 0 {
+						form := huh.NewForm(groups...).WithTheme(huh.ThemeCharm())
+						if err := form.Run(); err != nil {
+							return fmt.Errorf("model selection cancelled: %w", err)
+						}
+					}
+				} else if initModelLarge == "" || initModelMedium == "" || initModelFast == "" {
+					// Fallback to text input for missing models
+					var groups []*huh.Group
+					if initModelLarge == "" {
+						groups = append(groups, huh.NewGroup(
+							huh.NewInput().
+								Title("Enter Large Model Name").
+								Description("Capable of reasoning and orchestrating. Defaulted for Coordinator roles.").
+								Value(&modelLarge),
+						))
+					}
+					if initModelMedium == "" {
+						groups = append(groups, huh.NewGroup(
+							huh.NewInput().
+								Title("Enter Medium Model Name").
+								Description("Balanced size for iterative tasks. Defaulted for the Builder, Merger, and Reviewer roles.").
+								Value(&modelMedium),
+						))
+					}
+					if initModelFast == "" {
+						groups = append(groups, huh.NewGroup(
+							huh.NewInput().
+								Title("Enter Fast Model Name").
+								Description("Optimized for speed and log volume. Used by Scout to do repository grepping.").
+								Value(&modelFast),
+						))
+					}
+
+					if len(groups) > 0 {
+						form := huh.NewForm(groups...).WithTheme(huh.ThemeCharm())
+						if err := form.Run(); err != nil {
+							return fmt.Errorf("model selection cancelled: %w", err)
+						}
+					}
+				}
+			}
 		}
+
+		fmt.Println()
 	}
 
 	fmt.Println()
@@ -197,11 +289,63 @@ func runInit() error {
 	}
 
 	// Step 4: Generate config.yaml
+	// Get project name from flag or directory
+	projectName := initProjectName
+	if projectName == "" {
+		cwd, _ := os.Getwd()
+		projectName = filepath.Base(cwd)
+	}
+
 	conf := config.Config{
 		Tool:        tool,
 		ModelLarge:  modelLarge,
 		ModelMedium: modelMedium,
 		ModelFast:   modelFast,
+		Project: config.ProjectConfig{
+			Name:            projectName,
+			Root:            ".",
+			CanonicalBranch: initBranch,
+		},
+		Agents: config.AgentsConfig{
+			ManifestPath:   ".assistant-to/agent-manifest.json",
+			BaseDir:        ".assistant-to/agent-defs",
+			MaxConcurrent:  initMaxAgents,
+			StaggerDelayMs: 2000,
+			MaxDepth:       2,
+			ScoutEnabled:   initScoutEnabled,
+			ScoutWaitSec:   600, // 10 minutes
+		},
+		Worktrees: config.WorktreesConfig{
+			BaseDir: ".assistant-to/worktrees",
+		},
+		TaskTracker: config.TaskTrackerConfig{
+			Enabled: true,
+		},
+		Mulch: config.MulchConfig{
+			Enabled:     true,
+			Domains:     []string{},
+			PrimeFormat: "markdown",
+		},
+		Merge: config.MergeConfig{
+			AIResolveEnabled: true,
+			ReimagineEnabled: false,
+		},
+		Watchdog: config.WatchdogConfig{
+			Tier0Enabled:        true,
+			Tier0IntervalMs:     30000,
+			Tier1Enabled:        true,
+			Tier2Enabled:        true,
+			StaleThresholdMs:    300000,
+			ZombieThresholdMs:   600000,
+			NudgeIntervalMs:     60000,
+			RecoveryWaitTime:    5,
+			EscapeKeyCount:      2,
+			MaxRecoveryAttempts: 3,
+		},
+		Logging: config.LoggingConfig{
+			Verbose:       false,
+			RedactSecrets: true,
+		},
 	}
 	configPath := filepath.Join(baseDir, "config.yaml")
 	if err := conf.Save(configPath); err != nil {
