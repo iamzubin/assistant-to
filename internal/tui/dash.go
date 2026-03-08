@@ -98,10 +98,12 @@ type dashModel struct {
 	newTaskDiff  string
 
 	// State
-	activePane     int // 0: Tasks, 1: Agents, 2: Feed
-	showTasksPane  bool
-	showAgentsPane bool
-	feedSortDesc   bool
+	activePane          int // 0: Tasks, 1: Agents, 2: Feed
+	showTasksPane       bool
+	showAgentsPane      bool
+	showCoordinatorPane bool
+	feedSortDesc        bool
+	coordinatorBuffer   string
 
 	// Styles
 	inactivePaneStyle lipgloss.Style
@@ -273,8 +275,17 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "n":
-			m.taskForm = m.initTaskForm()
-			return m, m.taskForm.Init()
+			if os.Getenv("TMUX") != "" {
+				// Use tmux popup for task addition
+				cmd := exec.Command("tmux", "display-popup", "-E", "-w", "80%", "-h", "80%", "at task add")
+				return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+					return tickMsg(time.Now())
+				})
+			} else {
+				// Fallback to internal form if not in tmux
+				m.taskForm = m.initTaskForm()
+				return m, m.taskForm.Init()
+			}
 		case "s":
 			m.feedSortDesc = !m.feedSortDesc
 			m.refreshData()
@@ -356,13 +367,21 @@ func (m *dashModel) resizePanes() {
 	hBord := 4
 	vBord := 2
 
+	// Decide if we should show the coordinator pane
+	// We show it if width > 160 or height > 50
+	m.showCoordinatorPane = m.width > 160 || m.height > 50
+
 	leftWidth := 0
 	if m.showTasksPane {
-		leftWidth = (m.width * 35) / 100
+		leftWidth = (m.width * 30) / 100
 	}
 
 	rightWidth := m.width - leftWidth
+	if m.showCoordinatorPane {
+		rightWidth = (rightWidth * 60) / 100
+	}
 
+	// rightWidth is now calculated based on whether the coordinator pane is shown
 	topRightHeight := 0
 	if m.showAgentsPane {
 		topRightHeight = (m.height * 40) / 100
@@ -372,7 +391,7 @@ func (m *dashModel) resizePanes() {
 	feedHeight := m.height - topRightHeight - 2
 
 	if m.showTasksPane {
-		m.taskList.SetSize(leftWidth-hBord, m.height-vBord-3) // Subtract 3 for footer clearance
+		m.taskList.SetSize(leftWidth-hBord, m.height-vBord-3)
 	}
 
 	if m.showAgentsPane {
@@ -468,6 +487,18 @@ func (m *dashModel) refreshData() {
 		}
 	}
 	m.feedList.SetItems(feedItems)
+
+	// Coordinator Live View
+	if m.showCoordinatorPane {
+		coordSession := prefix + "Coordinator"
+		// Capture last 50 lines
+		captureCmd := exec.Command("tmux", "capture-pane", "-p", "-t", coordSession, "-S", "-50")
+		if out, err := captureCmd.Output(); err == nil {
+			m.coordinatorBuffer = string(out)
+		} else {
+			m.coordinatorBuffer = "Coordinator session not found or inactive."
+		}
+	}
 }
 
 func (m dashModel) View() string {
@@ -529,6 +560,22 @@ func (m dashModel) View() string {
 	body := rightCol
 	if m.showTasksPane {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightCol)
+	}
+
+	if m.showCoordinatorPane {
+		coordWidth := m.width - lipgloss.Width(body)
+		coordView := lipgloss.NewStyle().
+			Width(coordWidth-hBord).
+			Height(m.height-vBord-2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#00ADD8")).
+			Padding(0, 1).
+			Render(lipgloss.JoinVertical(lipgloss.Left,
+				lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00ADD8")).Render("Coordinator Live Output"),
+				"",
+				m.coordinatorBuffer,
+			))
+		body = lipgloss.JoinHorizontal(lipgloss.Top, body, coordView)
 	}
 
 	sortStr := "DESC"
