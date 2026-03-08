@@ -33,9 +33,16 @@ Each Builder receives the appropriate system prompt and model from config.`,
 
 		fmt.Printf("Spawning Coordinator agent (session: %s)...\n", sessionName)
 
-		// We'll call 'at spawn Coordinator --role Coordinator'
+		// Get the path to the current binary
+		exePath, err := os.Executable()
+		if err != nil {
+			fmt.Printf("Failed to get executable path: %v\n", err)
+			os.Exit(1)
+		}
+
+		// We'll call './at spawn Coordinator --role Coordinator'
 		// This ensures it gets the Coordinator prompt from agents.md
-		spawnCmd := exec.Command("at", "spawn", "Coordinator", "--role", "Coordinator")
+		spawnCmd := exec.Command(exePath, "spawn", "Coordinator", "--role", "Coordinator")
 		spawnCmd.Stdout = os.Stdout
 		spawnCmd.Stderr = os.Stderr
 
