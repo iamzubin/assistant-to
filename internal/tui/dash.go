@@ -77,6 +77,8 @@ type feedItem struct {
 	Timestamp time.Time
 }
 
+const maxFeedDescriptionLength = 120
+
 func (f feedItem) Title() string {
 	typeStr := f.EventType
 	if typeStr == "question" {
@@ -84,7 +86,13 @@ func (f feedItem) Title() string {
 	}
 	return fmt.Sprintf("[%s] %s | %s", f.Timestamp.Format("15:04:05"), f.AgentID, typeStr)
 }
-func (f feedItem) Description() string { return f.Details }
+func (f feedItem) Description() string {
+	details := f.Details
+	if len(details) > maxFeedDescriptionLength {
+		details = details[:maxFeedDescriptionLength-3] + "..."
+	}
+	return details
+}
 func (f feedItem) FilterValue() string {
 	return fmt.Sprintf("%s %s %s", f.AgentID, f.EventType, f.Details)
 }
