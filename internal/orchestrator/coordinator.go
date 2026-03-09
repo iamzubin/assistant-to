@@ -356,13 +356,18 @@ func (c *Coordinator) spawnScout(ctx context.Context, task db.Task) error {
 	}
 
 	var agentCmd string
+	modelFlag := ""
+	if model != "auto" && model != "" {
+		modelFlag = fmt.Sprintf("--model %s ", model)
+	}
+
 	switch tool {
 	case "gemini":
-		agentCmd = fmt.Sprintf(`%s --model %s --approval-mode=yolo -i "$(cat .scout_mission.md)"`, geminiPath, model)
+		agentCmd = fmt.Sprintf(`%s %s--approval-mode=yolo -i "$(cat .scout_mission.md)"`, geminiPath, modelFlag)
 	case "opencode":
-		agentCmd = fmt.Sprintf(`%s . --model %s --prompt "$(cat .scout_mission.md)"`, opencodePath, model)
+		agentCmd = fmt.Sprintf(`%s . %s--prompt "$(cat .scout_mission.md)"`, opencodePath, modelFlag)
 	default:
-		agentCmd = fmt.Sprintf(`%s --model %s --prompt "$(cat .scout_mission.md)"`, tool, model)
+		agentCmd = fmt.Sprintf(`%s %s--prompt "$(cat .scout_mission.md)"`, tool, modelFlag)
 	}
 
 	sessionName := sandbox.ProjectPrefix(c.PWD) + "scout-" + taskID
@@ -461,13 +466,18 @@ func (c *Coordinator) spawnBuilder(ctx context.Context, task db.Task) error {
 
 	// Build command with env vars for MCP connection
 	var agentCmd string
+	modelFlag := ""
+	if model != "auto" && model != "" {
+		modelFlag = fmt.Sprintf("--model %s ", model)
+	}
+
 	switch tool {
 	case "gemini":
-		agentCmd = fmt.Sprintf(`%s --model %s --approval-mode=yolo -i "$(cat .mission.md)"`, geminiPath, model)
+		agentCmd = fmt.Sprintf(`%s %s--approval-mode=yolo -i "$(cat .mission.md)"`, geminiPath, modelFlag)
 	case "opencode":
-		agentCmd = fmt.Sprintf(`%s . --model %s --prompt "$(cat .mission.md)"`, opencodePath, model)
+		agentCmd = fmt.Sprintf(`%s . %s--prompt "$(cat .mission.md)"`, opencodePath, modelFlag)
 	default:
-		agentCmd = fmt.Sprintf(`%s --model %s --prompt "$(cat .mission.md)"`, tool, model)
+		agentCmd = fmt.Sprintf(`%s %s--prompt "$(cat .mission.md)"`, tool, modelFlag)
 	}
 
 	sessionName := sandbox.ProjectPrefix(c.PWD) + taskID
@@ -786,13 +796,18 @@ Commands:
 
 	// Build command - runs in project root
 	var agentCmd string
+	modelFlag := ""
+	if model != "auto" && model != "" {
+		modelFlag = fmt.Sprintf("--model %s ", model)
+	}
+
 	switch tool {
 	case "gemini":
-		agentCmd = fmt.Sprintf(`%s --model %s --approval-mode=yolo -i "$(cat .merger_mission.md)"`, geminiPath, model)
+		agentCmd = fmt.Sprintf(`%s %s--approval-mode=yolo -i "$(cat .merger_mission.md)"`, geminiPath, modelFlag)
 	case "opencode":
-		agentCmd = fmt.Sprintf(`%s . --model %s --prompt "$(cat .merger_mission.md)"`, opencodePath, model)
+		agentCmd = fmt.Sprintf(`%s . %s--prompt "$(cat .merger_mission.md)"`, opencodePath, modelFlag)
 	default:
-		agentCmd = fmt.Sprintf(`%s --model %s --prompt "$(cat .merger_mission.md)"`, tool, model)
+		agentCmd = fmt.Sprintf(`%s %s--prompt "$(cat .merger_mission.md)"`, tool, modelFlag)
 	}
 
 	sessionName := sandbox.ProjectPrefix(c.PWD) + "merger"

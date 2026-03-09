@@ -85,5 +85,8 @@ func (d *DB) InitSchema() error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize schema: %w", err)
 	}
-	return nil
+
+	// Enable foreign keys
+	_, err = d.Exec("PRAGMA foreign_keys = ON;")
+	return err
 }

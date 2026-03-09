@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -62,18 +63,33 @@ var runCmd = &cobra.Command{
 		}
 
 		model := spawnModel
-		if model == "" && conf != nil {
-			model = conf.ModelForRole(spawnRole)
+		if model == "auto" || model == "" {
+			if conf != nil && conf.LastModel != "" {
+				model = conf.LastModel
+			} else if conf != nil {
+				model = conf.ModelForRole(spawnRole)
+			}
 		}
 
-		// Calculate project-specific MCP port
-		_, mcpPort := conf.GetProjectPorts(pwd)
+		// Update last used model if explicitly provided
+		if spawnModel != "" && spawnModel != "auto" && conf != nil {
+			conf.LastModel = spawnModel
+			conf.Save(configPath)
+		}
+
+		// Calculate project-specific ports
+		apiPort, mcpPort := conf.GetProjectPorts(pwd)
+
+		// Ensure config reflects these project-specific ports even if load failed
+		conf.API.Port = apiPort
+		conf.API.MCPPort = mcpPort
 
 		// Normalize role (capitalize first letter) to match LoadPrompts convention
 		role := spawnRole
 		if len(role) > 0 {
 			role = strings.ToUpper(role[:1]) + strings.ToLower(role[1:])
 		}
+		mcpRole := strings.ToLower(role)
 
 		suffix := taskID
 		if role != "" && role != "Coordinator" {
@@ -96,17 +112,13 @@ var runCmd = &cobra.Command{
 					fmt.Printf("Warning: no prompt found for role %q\n", role)
 				}
 
-				// For Coordinator role, inject MCP documentation
-				if role == "Coordinator" {
-					mcpContent := prompts.GetMCP("coordinator")
-					if mcpContent != "" {
-						mcpPort := conf.MCPPortForRole("coordinator")
-						apiPort := conf.API.Port
-						mcpContent = strings.ReplaceAll(mcpContent, "{{.MCPPort}}", fmt.Sprintf("%d", mcpPort))
-						mcpContent = strings.ReplaceAll(mcpContent, "{{.APIPort}}", fmt.Sprintf("%d", apiPort))
-						mcpContent = strings.ReplaceAll(mcpContent, "{{.TaskID}}", "Coordinator")
-						finalPrompt = finalPrompt + "\n\n" + mcpContent
-					}
+				// Inject MCP documentation for ALL roles that have it
+				mcpContent := prompts.GetMCP(mcpRole)
+				if mcpContent != "" {
+					mcpContent = strings.ReplaceAll(mcpContent, "{{.MCPPort}}", fmt.Sprintf("%d", mcpPort))
+					mcpContent = strings.ReplaceAll(mcpContent, "{{.APIPort}}", fmt.Sprintf("%d", apiPort))
+					mcpContent = strings.ReplaceAll(mcpContent, "{{.TaskID}}", taskID)
+					finalPrompt = finalPrompt + "\n\n" + mcpContent
 				}
 			} else {
 				fmt.Printf("Warning: failed to load prompts: %v\n", err)
@@ -138,6 +150,7 @@ var runCmd = &cobra.Command{
 			fmt.Printf("Warning: failed to write mission file: %v\n", err)
 		}
 
+		// Calculate absolute path to the dwight executable
 		exePath, err := os.Executable()
 		if err != nil {
 			exePath = "dwight" // Fallback
@@ -145,6 +158,71 @@ var runCmd = &cobra.Command{
 		if absPath, err := filepath.Abs(exePath); err == nil {
 			exePath = absPath
 		}
+
+		// Generate MCP config files in the worktree (opencode.json, .gemini/settings.json, etc.)
+		// This ensures AI tools (like gemini-cli or opencode) can connect to the local MCP server.
+		mcpRole = strings.ToLower(role)
+		mcpPortForRole := conf.MCPPortForRole(mcpRole)
+
+		// Generate opencode.json
+		opencodeConfig := map[string]interface{}{
+			"$schema": "https://opencode.ai/config.json",
+			"mcp": map[string]interface{}{
+				"assistant-to": map[string]interface{}{
+					"type":    "local",
+					"command": []string{exePath, "mcp", "serve"},
+					"enabled": true,
+					"environment": map[string]string{
+						"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPortForRole),
+						"AT_AGENT_ROLE":   role,
+						"AT_TASK_ID":      taskID,
+						"AT_PROJECT_ROOT": pwd,
+					},
+				},
+			},
+		}
+		opencodePath := filepath.Join(worktreeDir, "opencode.json")
+		opencodeData, _ := json.MarshalIndent(opencodeConfig, "", "  ")
+		os.WriteFile(opencodePath, opencodeData, 0644)
+
+		// Generate Gemini settings.json
+		geminiConfig := map[string]interface{}{
+			"mcpServers": map[string]interface{}{
+				"assistant-to": map[string]interface{}{
+					"command": exePath,
+					"args":    []string{"mcp", "serve"},
+					"env": map[string]string{
+						"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPortForRole),
+						"AT_AGENT_ROLE":   role,
+						"AT_TASK_ID":      taskID,
+						"AT_PROJECT_ROOT": pwd,
+					},
+					"trust": true,
+				},
+			},
+		}
+		geminiSettingsPath := filepath.Join(worktreeDir, ".gemini", "settings.json")
+		os.MkdirAll(filepath.Dir(geminiSettingsPath), 0755)
+		geminiData, _ := json.MarshalIndent(geminiConfig, "", "  ")
+		os.WriteFile(geminiSettingsPath, geminiData, 0644)
+
+		// Generate generic mcp.json
+		mcpConfig := map[string]interface{}{
+			"name":        "assistant-to",
+			"description": fmt.Sprintf("Assistant-to %s agent MCP server", role),
+			"transport":   "stdio",
+			"command":     exePath,
+			"args":        []string{"mcp", "serve"},
+			"env": map[string]string{
+				"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPortForRole),
+				"AT_AGENT_ROLE":   role,
+				"AT_TASK_ID":      taskID,
+				"AT_PROJECT_ROOT": pwd,
+			},
+		}
+		mcpPath := filepath.Join(worktreeDir, "mcp.json")
+		mcpData, _ := json.MarshalIndent(mcpConfig, "", "  ")
+		os.WriteFile(mcpPath, mcpData, 0644)
 
 		geminiPath, err := exec.LookPath("gemini")
 		if err != nil {
@@ -157,19 +235,24 @@ var runCmd = &cobra.Command{
 		}
 
 		var agentCmd string
+		modelFlag := ""
+		if model != "auto" && model != "" {
+			modelFlag = fmt.Sprintf("--model %s ", model)
+		}
+
 		switch tool {
 		case "gemini":
 			// -i (prompt-interactive) takes the prompt as its argument.
 			// --approval-mode=yolo allows tools to run without manual confirmation.
 			// We use $(cat ...) inside the shell to avoid passing huge strings through tmux send-keys
-			agentCmd = fmt.Sprintf("%s --model %s --approval-mode=yolo -i \"$(cat .mission.md)\"", geminiPath, model)
+			agentCmd = fmt.Sprintf("%s %s--approval-mode=yolo -i \"$(cat .mission.md)\"", geminiPath, modelFlag)
 		case "opencode":
 			// opencode [project] --prompt [prompt]
 			// We run it in the current directory (.) and pass the mission as prompt
-			agentCmd = fmt.Sprintf("%s . --model %s --prompt \"$(cat .mission.md)\"", opencodePath, model)
+			agentCmd = fmt.Sprintf("%s . %s--prompt \"$(cat .mission.md)\"", opencodePath, modelFlag)
 		default:
 			// Generic fallback
-			agentCmd = fmt.Sprintf("%s --model %s --prompt \"$(cat .mission.md)\"", tool, model)
+			agentCmd = fmt.Sprintf("%s %s--prompt \"$(cat .mission.md)\"", tool, modelFlag)
 		}
 
 		// Update mission status if it's a numeric task ID
@@ -270,7 +353,7 @@ Target can be a task ID (e.g., 1) or a full agent ID (e.g., builder-1).`,
 }
 
 func init() {
-	runCmd.Flags().StringVarP(&spawnModel, "model", "m", "", "Model for the agent to use")
+	runCmd.Flags().StringVarP(&spawnModel, "model", "m", "", "Model for the agent to use (set to 'auto' to use last used model)")
 	runCmd.Flags().StringVarP(&spawnRole, "role", "r", "Builder", "Role of the agent (e.g., Builder, Reviewer)")
 	runCmd.Flags().StringVarP(&spawnPrompt, "prompt", "p", "", "Initial prompt or context for the agent")
 

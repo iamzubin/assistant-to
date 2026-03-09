@@ -198,8 +198,37 @@ func (d *DB) ListTasksByPriority(priority int) ([]Task, error) {
 	}, priority)
 }
 
-// RemoveTask deletes a task from the database
+// ListSubTasks retrieves all tasks that are children of the given parent ID
+func (d *DB) ListSubTasks(parentID int) ([]Task, error) {
+	query := `
+		SELECT id, parent_id, title, description, target_files, status, priority, created_at, updated_at
+		FROM tasks
+		WHERE parent_id = ?
+		ORDER BY id ASC
+	`
+	return queryList(d, query, func(rows *sql.Rows) (Task, error) {
+		var t Task
+		var targetFiles sql.NullString
+		var pID sql.NullInt64
+		err := rows.Scan(&t.ID, &pID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
+		if pID.Valid {
+			t.ParentID = int(pID.Int64)
+		}
+		if targetFiles.Valid {
+			t.TargetFiles = targetFiles.String
+		}
+		return t, err
+	}, parentID)
+}
+
+// RemoveTask deletes a task and all its sub-tasks from the database
 func (d *DB) RemoveTask(taskID int) error {
+	// First delete sub-tasks (cascading manually just in case, though schema has ON DELETE CASCADE)
+	subTasks, _ := d.ListSubTasks(taskID)
+	for _, st := range subTasks {
+		d.RemoveTask(st.ID)
+	}
+
 	query := `DELETE FROM tasks WHERE id = ?`
 	res, err := d.Exec(query, taskID)
 	if err != nil {

@@ -119,6 +119,7 @@ type Config struct {
 	ModelLarge  string                        `yaml:"model_large"`
 	ModelMedium string                        `yaml:"model_medium"`
 	ModelFast   string                        `yaml:"model_fast"`
+	LastModel   string                        `yaml:"last_model"`
 	Project     ProjectConfig                 `yaml:"project"`
 	Agents      AgentsConfig                  `yaml:"agents"`
 	Worktrees   WorktreesConfig               `yaml:"worktrees"`

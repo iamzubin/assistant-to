@@ -82,7 +82,7 @@ func TestTasksCRUD(t *testing.T) {
 	defer teardownTestDB(t, database, dir)
 
 	// Test AddTask
-	taskID, err := database.AddTask("Test DB", "Write db tests", "internal/db/db_test.go")
+	taskID, err := database.AddTask("Test DB", "Write db tests", "internal/db/db_test.go", 0)
 	if err != nil {
 		t.Fatalf("AddTask failed: %v", err)
 	}

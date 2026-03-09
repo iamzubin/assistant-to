@@ -75,13 +75,13 @@ func runInit() error {
 		tool = "gemini"
 	}
 	if modelLarge == "" {
-		modelLarge = "gemini-2.5-pro"
+		modelLarge = "auto"
 	}
 	if modelMedium == "" {
-		modelMedium = "gemini-2.5-flash"
+		modelMedium = "auto"
 	}
 	if modelFast == "" {
-		modelFast = "gemini-2.5-flash-lite"
+		modelFast = "auto"
 	}
 
 	// Lipgloss UI Styles
@@ -130,16 +130,19 @@ func runInit() error {
 		if initModelLarge == "" || initModelMedium == "" || initModelFast == "" {
 			if tool == "gemini" {
 				largeOpts := []huh.Option[string]{
+					huh.NewOption("auto (use last used or default)", "auto"),
 					huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
 					huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
 					huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
 				}
 				mediumOpts := []huh.Option[string]{
+					huh.NewOption("auto (use last used or default)", "auto"),
 					huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
 					huh.NewOption("gemini-2.5-pro", "gemini-2.5-pro"),
 					huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
 				}
 				fastOpts := []huh.Option[string]{
+					huh.NewOption("auto (use last used or default)", "auto"),
 					huh.NewOption("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
 					huh.NewOption("gemini-2.5-flash", "gemini-2.5-flash"),
 				}
@@ -185,6 +188,7 @@ func runInit() error {
 				models, fetchErr := fetchOpencodeModels()
 				if fetchErr == nil && len(models) > 0 && (initModelLarge == "" || initModelMedium == "" || initModelFast == "") {
 					var opts []huh.Option[string]
+					opts = append(opts, huh.NewOption("auto (use last used or default)", "auto"))
 					for _, m := range models {
 						opts = append(opts, huh.NewOption(m, m))
 					}

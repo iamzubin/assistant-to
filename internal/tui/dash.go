@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -36,7 +34,12 @@ type AgentStatus struct {
 
 type taskItem struct{ db.Task }
 
-func (t taskItem) Title() string       { return fmt.Sprintf("[%d] %s", t.ID, t.Task.Title) }
+func (t taskItem) Title() string {
+	if t.ParentID > 0 {
+		return fmt.Sprintf("[%d] ↳ %s (Parent:%d)", t.ID, t.Task.Title, t.ParentID)
+	}
+	return fmt.Sprintf("[%d] %s", t.ID, t.Task.Title)
+}
 func (t taskItem) Description() string { return fmt.Sprintf("Status: %s", t.Status) }
 func (t taskItem) FilterValue() string { return t.Task.Title }
 
@@ -92,12 +95,6 @@ type dashModel struct {
 	taskList  list.Model
 	agentList list.Model
 	feedList  list.Model
-	taskForm  *huh.Form
-
-	// Task Form bindings
-	newTaskTitle string
-	newTaskDesc  string
-	newTaskDiff  string
 
 	// State
 	activePane      int // 0: Tasks, 1: Agents, 2: Feed
@@ -189,77 +186,11 @@ func (m dashModel) tick() tea.Cmd {
 	})
 }
 
-func (m dashModel) initTaskForm() *huh.Form {
-	m.newTaskTitle = ""
-	m.newTaskDesc = ""
-	m.newTaskDiff = "Small Feature"
-
-	return huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Task Title").
-				Description("A concise name for this work item.").
-				Validate(func(s string) error {
-					if strings.TrimSpace(s) == "" {
-						return fmt.Errorf("title cannot be empty")
-					}
-					return nil
-				}).
-				Value(&m.newTaskTitle),
-			huh.NewText().
-				Title("Description").
-				Value(&m.newTaskDesc),
-			huh.NewSelect[string]().
-				Title("Difficulty").
-				Options(
-					huh.NewOption("Small Fix", "small_fix"),
-					huh.NewOption("Small Feature", "small_feature"),
-					huh.NewOption("Complex Refactor", "complex_refactor"),
-					huh.NewOption("Full Module", "full_module"),
-				).
-				Value(&m.newTaskDiff),
-		),
-	).WithTheme(huh.ThemeCharm())
-}
-
 func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
 		cmd  tea.Cmd
 		cmds []tea.Cmd
 	)
-
-	// If form is active, intercept EVERYTHING except window resizes
-	if m.taskForm != nil {
-		switch msg := msg.(type) {
-		case tea.WindowSizeMsg:
-			m.width = msg.Width
-			m.height = msg.Height
-			m.resizePanes()
-		}
-
-		form, cmd := m.taskForm.Update(msg)
-		if f, ok := form.(*huh.Form); ok {
-			m.taskForm = f
-
-			if m.taskForm.State == huh.StateCompleted {
-				// Save to DB
-				taskID, err := m.db.AddTask(m.newTaskTitle, m.newTaskDesc, "", 0)
-				if err == nil {
-					spec := fmt.Sprintf("# Task %d: %s\n\n**Status:** pending\n**Difficulty:** %s\n\n## Description\n\n%s\n",
-						taskID, m.newTaskTitle, m.newTaskDiff, m.newTaskDesc)
-					specsDir := filepath.Join(".assistant-to", "specs")
-					os.MkdirAll(specsDir, 0755)
-					os.WriteFile(filepath.Join(specsDir, fmt.Sprintf("%d.md", taskID)), []byte(spec), 0644)
-				}
-				m.taskForm = nil
-				m.refreshData()
-			} else if m.taskForm.State == huh.StateAborted {
-				m.taskForm = nil
-			}
-		}
-		cmds = append(cmds, cmd)
-		return m, tea.Batch(cmds...)
-	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -309,40 +240,14 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "n":
-			// Spawn task-add in tmux session for reliability
-			prefix := sandbox.ProjectPrefix(m.projectRoot)
-			taskSession := prefix + "task-add"
-
-			// Kill existing task-add session if any
-			killCmd := exec.Command("tmux", "kill-session", "-t", taskSession)
-			killCmd.Run() // Ignore error
-
-			// Create new session for task add
-			exePath, _ := os.Executable()
-			if exePath == "" {
+			exePath, err := os.Executable()
+			if err != nil {
 				exePath = "dwight"
 			}
-
-			cmd := exec.Command("tmux", "new-session", "-d", "-s", taskSession,
-				"-c", m.projectRoot,
-				fmt.Sprintf("%s task add; exec bash", exePath))
-
-			if err := cmd.Run(); err == nil {
-				// Switch to the task-add session
-				tmuxCmd := "switch-client"
-				if os.Getenv("TMUX") == "" {
-					tmuxCmd = "attach-session"
-				}
-
-				switchCmd := exec.Command("tmux", tmuxCmd, "-t", taskSession)
-				return m, tea.ExecProcess(switchCmd, func(err error) tea.Msg {
-					return tickMsg(time.Now())
-				})
-			} else {
-				// Fallback to internal form if tmux fails
-				m.taskForm = m.initTaskForm()
-				return m, m.taskForm.Init()
-			}
+			c := exec.Command(exePath, "task", "add")
+			return m, tea.ExecProcess(c, func(err error) tea.Msg {
+				return tickMsg(time.Now())
+			})
 		case "s":
 			m.feedSortDesc = !m.feedSortDesc
 			m.refreshData()
@@ -630,17 +535,6 @@ func (m *dashModel) cleanupProjectSessions() {
 func (m dashModel) View() string {
 	if !m.ready {
 		return "\n  Initializing Dashboard..."
-	}
-
-	// If the Add Task form is active, overlay it (only when not in tmux)
-	if m.taskForm != nil && os.Getenv("TMUX") == "" {
-		formView := m.taskForm.View()
-		box := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#7D56F4")).
-			Padding(1, 3).
-			Render(formView)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 	}
 
 	// Show quit confirmation dialog

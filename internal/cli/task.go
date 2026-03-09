@@ -26,7 +26,8 @@ var taskAddCmd = &cobra.Command{
 	Short: "Interactively add a new task to the queue",
 	Long:  `Presents an interactive form to define a new workload for the agents, writing the resulting specification to the .assistant-to/specs directory and enqueueing it in the state database.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runTaskAdd()
+		parentID, _ := cmd.Flags().GetInt("parent-id")
+		return runTaskAdd(parentID)
 	},
 }
 
@@ -37,6 +38,7 @@ func init() {
 	taskCmd.AddCommand(taskRemoveCmd)
 	RootCmd.AddCommand(taskCmd)
 
+	taskAddCmd.Flags().Int("parent-id", 0, "Parent task ID for sub-tasks")
 	taskListCmd.Flags().StringP("status", "s", "", "Filter tasks by status")
 }
 
@@ -87,7 +89,7 @@ var taskUpdateCmd = &cobra.Command{
 	},
 }
 
-func runTaskAdd() error {
+func runTaskAdd(parentID int) error {
 	var (
 		title       string
 		description string
@@ -180,7 +182,7 @@ func runTaskAdd() error {
 	}
 
 	// Insert the task
-	taskID, err := database.AddTask(title, description, targetFiles, 0)
+	taskID, err := database.AddTask(title, description, targetFiles, parentID)
 	if err != nil {
 		return fmt.Errorf("failed to add task to DB: %w", err)
 	}
@@ -239,14 +241,18 @@ func runTaskList(status string) error {
 		return nil
 	}
 
-	fmt.Printf("%-4s | %-12s | %s\n", "ID", "Status", "Title")
-	fmt.Println(strings.Repeat("-", 60))
+	fmt.Printf("%-4s | %-6s | %-12s | %s\n", "ID", "Parent", "Status", "Title")
+	fmt.Println(strings.Repeat("-", 70))
 	for _, t := range tasks {
 		displayTitle := t.Title
 		if displayTitle == "" {
 			displayTitle = "(no title)"
 		}
-		fmt.Printf("%-4d | %-12s | %s\n", t.ID, t.Status, displayTitle)
+		parentStr := ""
+		if t.ParentID > 0 {
+			parentStr = strconv.Itoa(t.ParentID)
+		}
+		fmt.Printf("%-4d | %-6s | %-12s | %s\n", t.ID, parentStr, t.Status, displayTitle)
 	}
 
 	return nil
