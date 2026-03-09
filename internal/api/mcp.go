@@ -120,7 +120,7 @@ func (s *MCPServer) initTools() {
 		},
 		{
 			Name:        "task_list",
-			Description: "List tasks, optionally filtered by status",
+			Description: "List tasks, optionally filtered by status. Omitting status returns ALL tasks across the entire lifecycle.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"status":{"type":"string"}}}`),
 			Handler:     s.handleTaskList,
 		},
