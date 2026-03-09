@@ -431,11 +431,19 @@ func runInit() error {
 		return fmt.Errorf("gitignore confirmation cancelled: %w", err)
 	}
 
+	gitignoreEntries := []string{
+		".assistant-to/",
+		"mcp.json",
+		"opencode.json",
+		".gemini/",
+		"mcp-configs/",
+	}
+
 	if addToGitignore {
-		if err := appendToGitignore(".assistant-to/"); err != nil {
+		if err := appendMultipleToGitignore(gitignoreEntries); err != nil {
 			fmt.Printf("%s Failed to update .gitignore: %v\n", infoStyle.Render("!"), err)
 		} else {
-			fmt.Printf("%s Added .assistant-to/ to .gitignore\n", successStyle.Render("✓"))
+			fmt.Printf("%s Added entries to .gitignore\n", successStyle.Render("✓"))
 		}
 	}
 
@@ -706,7 +714,6 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 		"- **Builder/Scout/Reviewer/Merger** (worktrees): Limited access - spawned by coordinator\n\n" +
 		"Each worktree gets its own MCP config when an agent is spawned.\n"
 
-
 	readmePath := filepath.Join(mcpDir, "README.md")
 	if err := os.WriteFile(readmePath, []byte(readmeContent), 0644); err != nil {
 		return fmt.Errorf("failed to write mcp readme: %w", err)
@@ -715,17 +722,16 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 	return nil
 }
 
-func appendToGitignore(entry string) error {
+func appendMultipleToGitignore(entries []string) error {
 	content, err := os.ReadFile(".gitignore")
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
+	existing := make(map[string]bool)
 	lines := strings.Split(string(content), "\n")
 	for _, line := range lines {
-		if strings.TrimSpace(line) == entry {
-			return nil // already exists
-		}
+		existing[strings.TrimSpace(line)] = true
 	}
 
 	f, err := os.OpenFile(".gitignore", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -734,9 +740,19 @@ func appendToGitignore(entry string) error {
 	}
 	defer f.Close()
 
-	if len(content) > 0 && content[len(content)-1] != '\n' {
-		f.WriteString("\n")
+	contentStr := string(content)
+	for _, entry := range entries {
+		if existing[entry] {
+			continue
+		}
+		if len(contentStr) > 0 && contentStr[len(contentStr)-1] != '\n' {
+			f.WriteString("\n")
+		}
+		if _, err := f.WriteString(entry + "\n"); err != nil {
+			return err
+		}
+		contentStr += "\n" + entry
+		existing[entry] = true
 	}
-	_, err = f.WriteString(entry + "\n")
-	return err
+	return nil
 }
