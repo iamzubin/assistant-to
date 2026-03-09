@@ -112,14 +112,14 @@ func (w *Watchdog) checkHeartbeat(ctx context.Context, agentID string) error {
 	// 1. Check if tmux session exists
 	if !session.HasSession() {
 		config.Info("Watchdog: Session %s no longer exists for agent %s", sessionName, agentID)
-		w.DB.RecordEvent(agentID, constants.EventTypeSessionDead, "Tmux session no longer exists")
+		w.DB.RecordEvent(sessionName, constants.EventTypeSessionDead, "Tmux session no longer exists")
 		return nil
 	}
 
 	// 2. Check tmux connectivity (ping)
 	if !session.Ping() {
 		config.Error("🚨 Watchdog: Tmux session %s is not responsive (ping failed)", sessionName)
-		w.DB.RecordEvent(agentID, constants.EventTypeTmuxUnresponsive, "Tmux session ping failed - session may be frozen")
+		w.DB.RecordEvent(sessionName, constants.EventTypeTmuxUnresponsive, "Tmux session ping failed - session may be frozen")
 		// Don't return - try to recover
 	}
 
@@ -127,11 +127,11 @@ func (w *Watchdog) checkHeartbeat(ctx context.Context, agentID string) error {
 	pid, err := session.GetPID()
 	if err != nil {
 		config.Error("Watchdog: Could not get PID for session %s: %v", sessionName, err)
-		w.DB.RecordEvent(agentID, constants.EventTypePIDCheckFailed, fmt.Sprintf("Failed to get PID: %v", err))
+		w.DB.RecordEvent(sessionName, constants.EventTypePIDCheckFailed, fmt.Sprintf("Failed to get PID: %v", err))
 	} else {
 		if !sandbox.IsProcessAlive(pid) {
 			config.Error("🚨 Watchdog: Process %d in session %s is dead", pid, sessionName)
-			w.DB.RecordEvent(agentID, constants.EventTypeProcessDead, fmt.Sprintf("Process %d is no longer alive", pid))
+			w.DB.RecordEvent(sessionName, constants.EventTypeProcessDead, fmt.Sprintf("Process %d is no longer alive", pid))
 			return nil
 		}
 	}
@@ -140,10 +140,12 @@ func (w *Watchdog) checkHeartbeat(ctx context.Context, agentID string) error {
 	var lastSeen time.Time
 	var lastType string
 	query := `SELECT timestamp, event_type FROM events WHERE agent_id = ? ORDER BY timestamp DESC LIMIT 1`
-	err = w.DB.QueryRowContext(timeoutCtx, query, agentID).Scan(&lastSeen, &lastType)
+	err = w.DB.QueryRowContext(timeoutCtx, query, sessionName).Scan(&lastSeen, &lastType)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil // New agent, no events yet
+			// No events yet, record initial heartbeat
+			w.DB.RecordEvent(sessionName, "heartbeat", "Initial heartbeat recorded by watchdog")
+			return nil
 		}
 		return fmt.Errorf("db error: %w", err)
 	}
@@ -163,7 +165,7 @@ func (w *Watchdog) checkHeartbeat(ctx context.Context, agentID string) error {
 				(strings.Contains(lowerBuf, "?") && time.Since(lastSeen) > 2*time.Minute) {
 
 				config.Info("Watchdog: Detected potential input request in tmux buffer for %s", agentID)
-				w.DB.RecordEvent(agentID, constants.EventTypeQuestion, "Proactive Detection: Agent output suggests it is waiting for input.")
+				w.DB.RecordEvent(sessionName, constants.EventTypeQuestion, "Proactive Detection: Agent output suggests it is waiting for input.")
 				return nil
 			}
 		}
@@ -180,7 +182,7 @@ func (w *Watchdog) checkHeartbeat(ctx context.Context, agentID string) error {
 		if !state.escalationSent {
 			state.mu.Unlock()
 			config.Error("🚨 Watchdog: Agent %s is ZOMBIE - no activity for %v (threshold: %v)", agentID, idleTime, zombieThreshold)
-			w.DB.RecordEvent(agentID, constants.EventTypeZombieDetected, fmt.Sprintf("Agent unresponsive for %v", idleTime))
+			w.DB.RecordEvent(sessionName, constants.EventTypeZombieDetected, fmt.Sprintf("Agent unresponsive for %v", idleTime))
 			return w.escalateZombieAgent(timeoutCtx, agentID, session)
 		}
 		state.mu.Unlock()
@@ -210,7 +212,7 @@ func (w *Watchdog) checkHeartbeat(ctx context.Context, agentID string) error {
 		if state.attempts >= maxAttempts {
 			state.mu.Unlock()
 			config.Error("🚨 Watchdog: Agent %s has exceeded max recovery attempts (%d), giving up", agentID, maxAttempts)
-			w.DB.RecordEvent(agentID, constants.EventTypeMaxRecoveryExceeded, fmt.Sprintf("Agent exceeded maximum recovery attempts (%d)", maxAttempts))
+			w.DB.RecordEvent(sessionName, constants.EventTypeMaxRecoveryExceeded, fmt.Sprintf("Agent exceeded maximum recovery attempts (%d)", maxAttempts))
 			return nil
 		}
 
@@ -240,10 +242,11 @@ func (w *Watchdog) escalateZombieAgent(ctx context.Context, agentID string, sess
 	state.escalationSent = true
 	state.recoveryInProgress = false
 
+	sessionName := session.SessionName
 	config.Error("🚨 Watchdog: ZOMBIE ESCALATION - Agent %s is completely unresponsive", agentID)
 
 	// Record zombie event
-	w.DB.RecordEvent(agentID, constants.EventTypeZombieEscalation, "Agent is zombie - may need session kill and manual intervention")
+	w.DB.RecordEvent(sessionName, constants.EventTypeZombieEscalation, "Agent is zombie - may need session kill and manual intervention")
 
 	// Send urgent email to Coordinator
 	coordinatorMsg := fmt.Sprintf(
@@ -273,18 +276,19 @@ func (w *Watchdog) recoverStuckAgent(ctx context.Context, agentID string, sessio
 	state.recoveryInProgress = true
 
 	escapeCount := w.Config.GetWatchdogEscapeKeyCount()
+	sessionName := session.SessionName
 
 	log.Printf("Watchdog: Recovering agent %s (attempt %d/%d) - sending %d escape key(s)",
 		agentID, state.attempts, w.Config.GetWatchdogMaxRecoveryAttempts(), escapeCount)
 
 	// Record recovery attempt event
-	w.DB.RecordEvent(agentID, constants.EventTypeRecovery,
+	w.DB.RecordEvent(sessionName, constants.EventTypeRecovery,
 		fmt.Sprintf("Sending %d escape key(s) to interrupt stuck process (attempt %d)", escapeCount, state.attempts))
 
 	// TIER 1: AI Triage - Perform intelligent analysis on first recovery attempt
 	if w.tier1Enabled && state.attempts == 1 {
 		log.Printf("Watchdog: Triggering Tier 1 AI Triage for %s", agentID)
-		w.DB.RecordEvent(agentID, constants.EventTypeTriageTriggered, "Tier 1 AI Triage triggered on first recovery attempt")
+		w.DB.RecordEvent(sessionName, constants.EventTypeTriageTriggered, "Tier 1 AI Triage triggered on first recovery attempt")
 
 		// Run triage in background to not block
 		go func() {
@@ -294,7 +298,7 @@ func (w *Watchdog) recoverStuckAgent(ctx context.Context, agentID string, sessio
 			analysis, err := w.tier1.PerformTriage(triageCtx, agentID)
 			if err != nil {
 				log.Printf("Watchdog: Tier 1 triage failed for %s: %v", agentID, err)
-				w.DB.RecordEvent(agentID, constants.EventTypeTriageError, fmt.Sprintf("Tier 1 triage error: %v", err))
+				w.DB.RecordEvent(sessionName, constants.EventTypeTriageError, fmt.Sprintf("Tier 1 triage error: %v", err))
 			} else {
 				log.Printf("Watchdog: Tier 1 triage completed for %s - Failure mode: %s (confidence: %.2f)",
 					agentID, analysis.FailureMode, analysis.Confidence)
@@ -333,11 +337,12 @@ func (w *Watchdog) escalateStuckAgent(ctx context.Context, agentID string, sessi
 
 	state.escalationSent = true
 	state.recoveryInProgress = false
+	sessionName := session.SessionName
 
 	log.Printf("🚨 Watchdog: ESCALATION - Agent %s is non-responsive even after recovery attempt", agentID)
 
 	// Record escalation event
-	w.DB.RecordEvent(agentID, constants.EventTypeEscalation, "Agent non-responsive after recovery attempt - notifying Coordinator")
+	w.DB.RecordEvent(sessionName, constants.EventTypeEscalation, "Agent non-responsive after recovery attempt - notifying Coordinator")
 
 	// Send email to Coordinator
 	coordinatorMsg := fmt.Sprintf(

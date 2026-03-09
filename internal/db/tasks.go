@@ -138,6 +138,32 @@ func (d *DB) UpdateTaskPriority(taskID int, priority int) error {
 	return nil
 }
 
+// GetTaskByID retrieves a single task by its ID
+func (d *DB) GetTaskByID(id int) (Task, error) {
+	query := `
+		SELECT id, parent_id, title, description, target_files, status, priority, created_at, updated_at
+		FROM tasks
+		WHERE id = ?
+	`
+	var t Task
+	var targetFiles sql.NullString
+	var parentID sql.NullInt64
+	err := d.QueryRow(query, id).Scan(&t.ID, &parentID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return Task{}, fmt.Errorf("task not found: %d", id)
+		}
+		return Task{}, err
+	}
+	if parentID.Valid {
+		t.ParentID = int(parentID.Int64)
+	}
+	if targetFiles.Valid {
+		t.TargetFiles = targetFiles.String
+	}
+	return t, nil
+}
+
 // ListTasksByStatus retrieves all tasks matching a specific status.
 // If status is empty, it returns all tasks.
 func (d *DB) ListTasksByStatus(status string) ([]Task, error) {
@@ -245,28 +271,3 @@ func (d *DB) RemoveTask(taskID int) error {
 	return nil
 }
 
-// GetTaskByID retrieves a single task by its ID.
-func (d *DB) GetTaskByID(taskID int) (*Task, error) {
-	query := `
-		SELECT id, parent_id, title, description, target_files, status, priority, created_at, updated_at
-		FROM tasks
-		WHERE id = ?
-	`
-	var t Task
-	var targetFiles sql.NullString
-	var parentID sql.NullInt64
-	err := d.QueryRow(query, taskID).Scan(&t.ID, &parentID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
-	if parentID.Valid {
-		t.ParentID = int(parentID.Int64)
-	}
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("task not found: %d", taskID)
-		}
-		return nil, fmt.Errorf("failed to get task: %w", err)
-	}
-	if targetFiles.Valid {
-		t.TargetFiles = targetFiles.String
-	}
-	return &t, nil
-}

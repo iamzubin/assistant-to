@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,8 @@ import (
 
 type AgentStatus struct {
 	SessionName   string
+	TaskID        string
+	TaskTitle     string
 	LastHeartbeat time.Time
 	Status        string
 }
@@ -57,7 +60,13 @@ func (a agentItem) Description() string {
 	} else if strings.HasPrefix(status, "stuck") {
 		status = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Bold(true).Render(status)
 	}
-	return fmt.Sprintf("HB: %s | %s", timeStr, status)
+
+	taskInfo := ""
+	if a.TaskTitle != "" {
+		taskInfo = fmt.Sprintf("Task: %s | ", lipgloss.NewStyle().Foreground(lipgloss.Color("#00BFFF")).Render(a.TaskTitle))
+	}
+
+	return fmt.Sprintf("%sHB: %s | %s", taskInfo, timeStr, status)
 }
 func (a agentItem) FilterValue() string { return a.SessionName }
 
@@ -395,8 +404,8 @@ func (m *dashModel) refreshData() {
 	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
 		mockLog, _ := m.db.GetAgentHistory("mock-builder")
 		if len(mockLog) > 0 {
-			agentItems = append(agentItems, agentItem{AgentStatus{"mock-builder", time.Now(), "mock (healthy)"}})
-			agentItems = append(agentItems, agentItem{AgentStatus{"mock-coordinator", time.Now().Add(-10 * time.Minute), "mock (stuck)"}})
+			agentItems = append(agentItems, agentItem{AgentStatus{"mock-builder", "1", "Mock Task 1", time.Now(), "mock (healthy)"}})
+			agentItems = append(agentItems, agentItem{AgentStatus{"mock-coordinator", "", "", time.Now().Add(-10 * time.Minute), "mock (stuck)"}})
 		}
 	} else {
 		sessions := strings.Split(strings.TrimSpace(string(out)), "\n")
@@ -423,8 +432,24 @@ func (m *dashModel) refreshData() {
 					status = "unknown"
 				}
 
+				// Try to extract task ID from display name (e.g., "builder-1", "scout-2")
+				taskID := ""
+				taskTitle := ""
+				parts := strings.Split(displayName, "-")
+				if len(parts) >= 2 {
+					potentialID := parts[len(parts)-1]
+					if id, err := strconv.Atoi(potentialID); err == nil {
+						taskID = potentialID
+						if task, err := m.db.GetTaskByID(id); err == nil {
+							taskTitle = task.Title
+						}
+					}
+				}
+
 				agentItems = append(agentItems, agentItem{AgentStatus{
 					SessionName:   displayName,
+					TaskID:        taskID,
+					TaskTitle:     taskTitle,
 					LastHeartbeat: lastSeen,
 					Status:        status,
 				}})

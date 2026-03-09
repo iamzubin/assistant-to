@@ -61,6 +61,42 @@ func (d *DB) GetAllEvents(limit int) ([]Event, error) {
 	}, limit)
 }
 
+// GetLastEvent retrieves the timestamp and type of the most recent event for an agent
+func (d *DB) GetLastEvent(agentID string) (time.Time, string, error) {
+	query := `
+		SELECT timestamp, event_type 
+		FROM events 
+		WHERE agent_id = ? 
+		ORDER BY timestamp DESC 
+		LIMIT 1
+	`
+	var lastSeenStr sql.NullString
+	var eventType sql.NullString
+	err := d.QueryRow(query, agentID).Scan(&lastSeenStr, &eventType)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return time.Time{}, "", nil
+		}
+		return time.Time{}, "", fmt.Errorf("failed to get last event: %w", err)
+	}
+
+	if !lastSeenStr.Valid || lastSeenStr.String == "" {
+		return time.Time{}, "", nil
+	}
+
+	// SQLite CURRENT_TIMESTAMP formatting
+	parsedTime, err := time.Parse("2006-01-02 15:04:05", lastSeenStr.String)
+	if err != nil {
+		// Fallback for RFC3339 in case of Go native time string
+		parsedTime, err = time.Parse(time.RFC3339, lastSeenStr.String)
+		if err != nil {
+			return time.Time{}, "", fmt.Errorf("failed to parse timestamp: %w", err)
+		}
+	}
+
+	return parsedTime, eventType.String, nil
+}
+
 // GetLastHeartbeat retrieves the timestamp of the last event for an agent
 func (d *DB) GetLastHeartbeat(agentID string) (time.Time, error) {
 	query := `

@@ -40,11 +40,11 @@ func (t *TmuxSession) Start(ctx context.Context) error {
 	// 1. Prepare environment arguments
 	// Note: tmux -e requires tmux 3.0+. For older versions, we use the shell prefix.
 	// To be safe across versions, we'll use a bash wrapper that sets environment.
-	
+
 	var envPrefix strings.Builder
 	// Always set TERM to ensure UI apps work
 	envPrefix.WriteString("export TERM=xterm-256color; ")
-	
+
 	if t.EnvVars != nil {
 		for key, value := range t.EnvVars {
 			// Basic escaping for environment variable values
@@ -77,7 +77,7 @@ func (t *TmuxSession) Start(ctx context.Context) error {
 	// -c: start directory
 	args := []string{"new-session", "-d", "-s", t.SessionName, "-c", t.WorktreeDir, fullCmd}
 	cmd := exec.CommandContext(ctx, "tmux", args...)
-	
+
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to create tmux session %q: %v (output: %s)", t.SessionName, err, output)
 	}
@@ -102,7 +102,7 @@ func (t *TmuxSession) CaptureBuffer(lines int) (string, error) {
 }
 
 func (t *TmuxSession) SendInput(keys string) error {
-	cmd := exec.Command("tmux", "send-keys", "-t", t.SessionName, keys, "C-m")
+	cmd := exec.Command("tmux", "send-keys", "-t", t.SessionName, keys, "Enter")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to send keys to session %q: %v (output: %s)", t.SessionName, err, output)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -281,11 +282,33 @@ func (s *MCPServer) ProcessRequest(req MCPRequest) *MCPResponse {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			resp.Error = &MCPError{Code: -32602, Message: "Invalid params"}
 		} else {
+			// Determine agent ID for logging - try from environment
+			role := os.Getenv("AT_AGENT_ROLE")
+			taskID := os.Getenv("AT_TASK_ID")
+			agentID := "unknown"
+			if role != "" {
+				if taskID != "" && taskID != "coordinator" {
+					agentID = strings.ToLower(role) + "-" + taskID
+				} else {
+					agentID = strings.ToLower(role)
+				}
+			}
+
+			// Prepend prefix to agentID if it's not already there
+			fullAgentID := agentID
+			if !strings.HasPrefix(agentID, s.prefix) && agentID != "unknown" {
+				fullAgentID = s.prefix + agentID
+			}
+
 			s.mu.RLock()
 			var result interface{}
 			var toolErr error
 			for _, t := range s.tools {
 				if t.Name == params.Name {
+					// Record tool call as an event (heartbeat + tool log)
+					// We do this BEFORE the handler to record the intent
+					s.db.RecordEvent(fullAgentID, "tool_call", fmt.Sprintf("%s(%s)", params.Name, string(params.Args)))
+
 					result, toolErr = t.Handler(params.Args)
 					break
 				}
@@ -405,12 +428,30 @@ func (s *MCPServer) handleLog(params json.RawMessage) (interface{}, error) {
 	}
 	json.Unmarshal(params, &p)
 	if p.AgentID == "" {
-		p.AgentID = "unknown"
+		// Fallback to environment if not provided in params
+		role := os.Getenv("AT_AGENT_ROLE")
+		taskID := os.Getenv("AT_TASK_ID")
+		if role != "" {
+			if taskID != "" && taskID != "coordinator" {
+				p.AgentID = strings.ToLower(role) + "-" + taskID
+			} else {
+				p.AgentID = strings.ToLower(role)
+			}
+		} else {
+			p.AgentID = "unknown"
+		}
 	}
+
+	// Ensure prefix is present
+	fullAgentID := p.AgentID
+	if !strings.HasPrefix(p.AgentID, s.prefix) && p.AgentID != "unknown" {
+		fullAgentID = s.prefix + p.AgentID
+	}
+
 	if p.Type == "" {
 		p.Type = "info"
 	}
-	s.db.RecordEvent(p.AgentID, p.Type, p.Details)
+	s.db.RecordEvent(fullAgentID, p.Type, p.Details)
 	return "logged", nil
 }
 
