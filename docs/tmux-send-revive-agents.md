@@ -58,3 +58,21 @@ tmux new-session -d -s stall-test "sleep 3000"
 ```
 
 This creates a detached session running `sleep 3000` - effectively "stalling" it. You can then use `session_send` to inject commands into it.
+
+## Stalling an Agent via MCP/tmux
+
+To stall an agent programmatically (without manually creating a session):
+
+1. Run a blocking command like `sleep 60` to keep it occupied
+2. Use tmux to send escape twice:
+   ```
+   tmux send-keys -t at-assistant-to-{worktree_id}-builder-{n} $'\e' ; sleep 1 ; tmux send-keys -t at-assistant-to-{worktree_id}-builder-{n} $'\e'
+   ```
+3. Send enter to confirm interrupt:
+   ```
+   tmux send-keys -t at-assistant-to-{worktree_id}-builder-{n} Enter
+   ```
+4. Then revive it using session_send MCP tool:
+   ```
+   session_send(agent_id="builder-6", input="your command")
+   ```
