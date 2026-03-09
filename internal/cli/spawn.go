@@ -10,8 +10,8 @@ import (
 
 	"assistant-to/internal/config"
 	"assistant-to/internal/db"
-	"assistant-to/internal/orchestrator"
 	"assistant-to/internal/sandbox"
+	"assistant-to/internal/tasking"
 
 	"github.com/spf13/cobra"
 )
@@ -48,8 +48,6 @@ var runCmd = &cobra.Command{
 			}
 		}
 
-		sessionName := sandbox.ProjectPrefix(pwd) + taskID
-
 		// Load config to determine the tool
 		configPath := filepath.Join(pwd, ".assistant-to", "config.yaml")
 		conf, err := config.Load(configPath)
@@ -77,6 +75,12 @@ var runCmd = &cobra.Command{
 			role = strings.ToUpper(role[:1]) + strings.ToLower(role[1:])
 		}
 
+		suffix := taskID
+		if role != "" && role != "Coordinator" {
+			suffix = strings.ToLower(role) + "-" + taskID
+		}
+		sessionName := sandbox.ProjectPrefix(pwd) + suffix
+
 		// Load prompt from agents.md if not provided
 		finalPrompt := spawnPrompt
 		if finalPrompt == "" {
@@ -85,7 +89,7 @@ var runCmd = &cobra.Command{
 			if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
 				promptsPath = filepath.Join(pwd, "internal", "orchestrator", "prompts")
 			}
-			prompts, err := orchestrator.LoadPrompts(promptsPath)
+			prompts, err := tasking.LoadPrompts(promptsPath)
 			if err == nil {
 				finalPrompt = prompts.Get(role)
 				if finalPrompt == "" {
@@ -201,22 +205,53 @@ var runCmd = &cobra.Command{
 }
 
 var connectCmd = &cobra.Command{
-	Use:   "connect <task-id>",
+	Use:   "connect <target>",
 	Short: "Connect to an active agent's tmux session",
 	Long: `Attaches your terminal to the tmux session of an actively running agent.
-Useful for observing the agent's live shell output or intervening directly.`,
+Target can be a task ID (e.g., 1) or a full agent ID (e.g., builder-1).`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		taskID := args[0]
+		target := args[0]
 		pwd, err := findProjectRoot()
 		if err != nil {
 			fmt.Printf("Failed to find project root: %v\n", err)
 			os.Exit(1)
 		}
-		sessionName := sandbox.ProjectPrefix(pwd) + taskID
+		prefix := sandbox.ProjectPrefix(pwd)
+
+		// Try different naming patterns
+		var sessionNames []string
+		if strings.Contains(target, "-") {
+			// Already looks like a full agent ID (role-id)
+			sessionNames = append(sessionNames, prefix+target)
+		} else {
+			// Likely just a task ID, try common roles
+			sessionNames = append(sessionNames, prefix+target) // Fallback for coordinator or legacy
+			sessionNames = append(sessionNames, prefix+"builder-"+target)
+			sessionNames = append(sessionNames, prefix+"scout-"+target)
+			sessionNames = append(sessionNames, prefix+"reviewer-"+target)
+		}
+
+		var sessionName string
+		for _, name := range sessionNames {
+			checkCmd := exec.Command("tmux", "has-session", "-t", name)
+			if checkCmd.Run() == nil {
+				sessionName = name
+				break
+			}
+		}
+
+		if sessionName == "" {
+			fmt.Printf("Error: could not find an active session for '%s'\n", target)
+			fmt.Println("Available sessions:")
+			sessions, _ := sandbox.ListSessions(prefix)
+			for _, s := range sessions {
+				fmt.Printf(" - %s\n", s)
+			}
+			os.Exit(1)
+		}
 
 		// If we are currently inside of a tmux session, we switch-client to avoid nesting
-		// If we are in a normal terminal, we attach-session
 		tmuxCmd := "attach-session"
 		if os.Getenv("TMUX") != "" {
 			tmuxCmd = "switch-client"
@@ -229,7 +264,6 @@ Useful for observing the agent's live shell output or intervening directly.`,
 
 		if err := c.Run(); err != nil {
 			fmt.Printf("Failed to connect to session '%s': %v\n", sessionName, err)
-			fmt.Println("Are you sure this agent is currently running?")
 			os.Exit(1)
 		}
 	},

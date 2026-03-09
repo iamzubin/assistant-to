@@ -1,4 +1,4 @@
-package orchestrator
+package tasking
 
 import (
 	"fmt"
@@ -75,7 +75,7 @@ func NewPromptComposer(basePath string) (*PromptComposer, error) {
 
 // loadTemplates loads all .md files from the prompts directory
 func (pc *PromptComposer) loadTemplates() error {
-	entries, err := os.ReadDir(pc.basePath)
+	entries, err := pc.readDir(pc.basePath)
 	if err != nil {
 		return fmt.Errorf("failed to read prompts directory: %w", err)
 	}
@@ -115,6 +115,11 @@ func (pc *PromptComposer) loadTemplates() error {
 	}
 
 	return nil
+}
+
+// readDir is a helper to read directory entries
+func (pc *PromptComposer) readDir(path string) ([]os.DirEntry, error) {
+	return os.ReadDir(path)
 }
 
 // Compose creates a final prompt by composing templates
@@ -227,18 +232,19 @@ func (pc *PromptComposer) ListTemplates() []string {
 func extractVariables(content string) []string {
 	var variables []string
 	// Simple regex-like extraction
+	curr := content
 	for {
-		start := strings.Index(content, "{{.")
+		start := strings.Index(curr, "{{.")
 		if start == -1 {
 			break
 		}
-		end := strings.Index(content[start:], "}}")
+		end := strings.Index(curr[start:], "}}")
 		if end == -1 {
 			break
 		}
-		variable := content[start+3 : start+end]
+		variable := curr[start+3 : start+end]
 		variables = append(variables, variable)
-		content = content[start+end+2:]
+		curr = curr[start+end+2:]
 	}
 	return variables
 }

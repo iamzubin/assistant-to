@@ -16,6 +16,7 @@ import (
 	"assistant-to/internal/config"
 	"assistant-to/internal/db"
 	"assistant-to/internal/sandbox"
+	"assistant-to/internal/tasking"
 )
 
 type MCPServer struct {
@@ -129,6 +130,12 @@ func (s *MCPServer) initTools() {
 			Description: "Update a task's status",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"task_id":{"type":"integer"},"status":{"type":"string"}},"required":["task_id","status"]}`),
 			Handler:     s.handleTaskUpdate,
+		},
+		{
+			Name:        "task_add",
+			Description: "Add a new task to the swarm",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string"},"description":{"type":"string"},"target_files":{"type":"string"},"difficulty":{"type":"string","enum":["small_fix","small_feature","complex_refactor","full_module"]},"parent_id":{"type":"integer"}},"required":["title","description"]}`),
+			Handler:     s.handleTaskAdd,
 		},
 		{
 			Name:        "buffer_capture",
@@ -300,10 +307,12 @@ func (s *MCPServer) ProcessRequest(req MCPRequest) *MCPResponse {
 				"version": "1.0.0",
 			},
 			"capabilities": map[string]interface{}{
-				"tools": map[string]interface{}{},
+				"tools": map[string]interface{}{
+					"listChanged": true,
+				},
 			},
 		}
-	case "notifications/initialized":
+	case "notifications/initialized", "initialized":
 		// No-op for initialized notification
 		fmt.Fprintf(os.Stderr, "[MCP] Received initialized notification\n")
 		return nil
@@ -471,6 +480,47 @@ func (s *MCPServer) handleTaskUpdate(params json.RawMessage) (interface{}, error
 	}
 	json.Unmarshal(params, &p)
 	return nil, s.db.UpdateTaskStatus(p.TaskID, p.Status)
+}
+
+func (s *MCPServer) handleTaskAdd(params json.RawMessage) (interface{}, error) {
+	var p struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		TargetFiles string `json:"target_files"`
+		Difficulty  string `json:"difficulty"`
+		ParentID    int    `json:"parent_id"`
+	}
+	json.Unmarshal(params, &p)
+
+	if p.Difficulty == "" {
+		p.Difficulty = "small_feature"
+	}
+
+	// Insert the task
+	taskID, err := s.db.AddTask(p.Title, p.Description, p.TargetFiles, p.ParentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add task to DB: %w", err)
+	}
+
+	// Ensure specs directory exists
+	specsDir := filepath.Join(s.pwd, ".assistant-to", "specs")
+	if err := os.MkdirAll(specsDir, 0755); err != nil {
+		s.db.RemoveTask(int(taskID))
+		return nil, fmt.Errorf("failed to create specs directory: %w", err)
+	}
+
+	// Generate AT_INSTRUCTIONS.md
+	specPath := filepath.Join(specsDir, fmt.Sprintf("%d.md", taskID))
+	if err := tasking.GenerateTaskInstructions(s.pwd, int(taskID), p.Title, p.Description, p.TargetFiles, p.Difficulty, specPath); err != nil {
+		s.db.RemoveTask(int(taskID))
+		return nil, fmt.Errorf("failed to generate AT_INSTRUCTIONS.md: %w", err)
+	}
+
+	return map[string]interface{}{
+		"task_id":   taskID,
+		"spec_path": specPath,
+		"status":    "created",
+	}, nil
 }
 
 func (s *MCPServer) handleBuffer(params json.RawMessage) (interface{}, error) {

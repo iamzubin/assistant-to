@@ -6,7 +6,7 @@ MCP server at 127.0.0.1:{{.MCPPort}} provides swarm management tools.
 
 **Mail:** `mail_list`, `mail_check`, `mail_send`
 
-**Tasks:** `task_list` (status), `task_update` (task_id, status)
+**Tasks:** `task_list` (status), `task_update` (task_id, status), `task_add` (title, description, target_files, difficulty, parent_id)
 
 **Agents:** `agent_spawn` (task_id, role)
 
@@ -19,8 +19,8 @@ MCP server at 127.0.0.1:{{.MCPPort}} provides swarm management tools.
 **Utils:** `cleanup`, `log_event`
 
 ## Guidelines
+- Check `task_list` WITHOUT a status filter every loop to see the full swarm state
 - Check `mail_list` (without filter) to intercept and monitor ALL agent communication
-- Use `task_list` to track the state of the entire swarm
 - Use `buffer_capture` to "snoop" on agent terminals without connecting
 - Use `session_send` to intervene or rescue stuck agents
 - Use `cleanup` after task completion

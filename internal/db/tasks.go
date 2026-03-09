@@ -42,6 +42,7 @@ const (
 // Task represents an autonomous work item
 type Task struct {
 	ID          int       `json:"id"`
+	ParentID    int       `json:"parent_id,omitempty"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	TargetFiles string    `json:"target_files"`
@@ -62,17 +63,22 @@ func IsValidTaskStatus(status string) bool {
 }
 
 // AddTask creates a new task in the database with status 'pending' and default priority
-func (d *DB) AddTask(title, description, targetFiles string) (int64, error) {
-	return d.AddTaskWithPriority(title, description, targetFiles, TaskPriorityNormal)
+func (d *DB) AddTask(title, description, targetFiles string, parentID int) (int64, error) {
+	return d.AddTaskWithPriority(title, description, targetFiles, TaskPriorityNormal, parentID)
 }
 
 // AddTaskWithPriority creates a new task with a specific priority
-func (d *DB) AddTaskWithPriority(title, description, targetFiles string, priority int) (int64, error) {
+func (d *DB) AddTaskWithPriority(title, description, targetFiles string, priority int, parentID int) (int64, error) {
 	query := `
-		INSERT INTO tasks (title, description, target_files, status, priority)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO tasks (title, description, target_files, status, priority, parent_id)
+		VALUES (?, ?, ?, ?, ?, ?)
 	`
-	res, err := d.Exec(query, title, description, targetFiles, TaskStatusPending, priority)
+	var pID interface{}
+	if parentID > 0 {
+		pID = parentID
+	}
+
+	res, err := d.Exec(query, title, description, targetFiles, TaskStatusPending, priority, pID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to add task: %w", err)
 	}
@@ -140,13 +146,13 @@ func (d *DB) ListTasksByStatus(status string) ([]Task, error) {
 
 	if status == "" {
 		query = `
-			SELECT id, title, description, target_files, status, priority, created_at, updated_at
+			SELECT id, parent_id, title, description, target_files, status, priority, created_at, updated_at
 			FROM tasks
 			ORDER BY priority ASC, id ASC
 		`
 	} else {
 		query = `
-			SELECT id, title, description, target_files, status, priority, created_at, updated_at
+			SELECT id, parent_id, title, description, target_files, status, priority, created_at, updated_at
 			FROM tasks
 			WHERE status = ?
 			ORDER BY priority ASC, id ASC
@@ -157,7 +163,11 @@ func (d *DB) ListTasksByStatus(status string) ([]Task, error) {
 	return queryList(d, query, func(rows *sql.Rows) (Task, error) {
 		var t Task
 		var targetFiles sql.NullString
-		err := rows.Scan(&t.ID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
+		var parentID sql.NullInt64
+		err := rows.Scan(&t.ID, &parentID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
+		if parentID.Valid {
+			t.ParentID = int(parentID.Int64)
+		}
 		if targetFiles.Valid {
 			t.TargetFiles = targetFiles.String
 		}
@@ -168,7 +178,7 @@ func (d *DB) ListTasksByStatus(status string) ([]Task, error) {
 // ListTasksByPriority retrieves all tasks matching a specific priority level
 func (d *DB) ListTasksByPriority(priority int) ([]Task, error) {
 	query := `
-		SELECT id, title, description, target_files, status, priority, created_at, updated_at
+		SELECT id, parent_id, title, description, target_files, status, priority, created_at, updated_at
 		FROM tasks
 		WHERE priority = ?
 		ORDER BY id ASC
@@ -176,7 +186,11 @@ func (d *DB) ListTasksByPriority(priority int) ([]Task, error) {
 	return queryList(d, query, func(rows *sql.Rows) (Task, error) {
 		var t Task
 		var targetFiles sql.NullString
-		err := rows.Scan(&t.ID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
+		var parentID sql.NullInt64
+		err := rows.Scan(&t.ID, &parentID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
+		if parentID.Valid {
+			t.ParentID = int(parentID.Int64)
+		}
 		if targetFiles.Valid {
 			t.TargetFiles = targetFiles.String
 		}
@@ -205,13 +219,17 @@ func (d *DB) RemoveTask(taskID int) error {
 // GetTaskByID retrieves a single task by its ID.
 func (d *DB) GetTaskByID(taskID int) (*Task, error) {
 	query := `
-		SELECT id, title, description, target_files, status, priority, created_at, updated_at
+		SELECT id, parent_id, title, description, target_files, status, priority, created_at, updated_at
 		FROM tasks
 		WHERE id = ?
 	`
 	var t Task
 	var targetFiles sql.NullString
-	err := d.QueryRow(query, taskID).Scan(&t.ID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
+	var parentID sql.NullInt64
+	err := d.QueryRow(query, taskID).Scan(&t.ID, &parentID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
+	if parentID.Valid {
+		t.ParentID = int(parentID.Int64)
+	}
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("task not found: %d", taskID)

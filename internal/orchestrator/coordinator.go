@@ -18,6 +18,7 @@ import (
 	"assistant-to/internal/db"
 	"assistant-to/internal/merge"
 	"assistant-to/internal/sandbox"
+	"assistant-to/internal/tasking"
 )
 
 // Coordinator manages the agent swarm by reading tasks from the DB
@@ -26,7 +27,7 @@ type Coordinator struct {
 	DB              *db.DB
 	Config          *config.Config
 	PWD             string // Project root directory
-	Prompts         *PromptBook
+	Prompts         *tasking.PromptBook
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
 	tier2           *Tier2Watchdog
@@ -61,7 +62,7 @@ func NewCoordinator(pwd string) (*Coordinator, error) {
 		// Fallback: look relative to this source file's package (dev mode)
 		promptsPath = filepath.Join(pwd, "internal", "orchestrator", "prompts")
 	}
-	prompts, err := LoadPrompts(promptsPath)
+	prompts, err := tasking.LoadPrompts(promptsPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load agent prompts from %s: %w", promptsPath, err)
 	}
@@ -730,7 +731,7 @@ func (c *Coordinator) spawnMerger(ctx context.Context) error {
 	if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
 		promptsPath = filepath.Join(c.PWD, "internal", "orchestrator", "prompts")
 	}
-	prompts, err := LoadPrompts(promptsPath)
+	prompts, err := tasking.LoadPrompts(promptsPath)
 	if err != nil {
 		return fmt.Errorf("failed to load prompts: %w", err)
 	}

@@ -243,7 +243,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if m.taskForm.State == huh.StateCompleted {
 				// Save to DB
-				taskID, err := m.db.AddTask(m.newTaskTitle, m.newTaskDesc, "")
+				taskID, err := m.db.AddTask(m.newTaskTitle, m.newTaskDesc, "", 0)
 				if err == nil {
 					spec := fmt.Sprintf("# Task %d: %s\n\n**Status:** pending\n**Difficulty:** %s\n\n## Description\n\n%s\n",
 						taskID, m.newTaskTitle, m.newTaskDiff, m.newTaskDesc)

@@ -48,6 +48,7 @@ func (d *DB) InitSchema() error {
 
 	CREATE TABLE IF NOT EXISTS tasks (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		parent_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
 		title TEXT NOT NULL,
 		description TEXT NOT NULL,
 		target_files TEXT,
