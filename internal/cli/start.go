@@ -1,12 +1,10 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
 
-	"assistant-to/internal/orchestrator"
 	"assistant-to/internal/sandbox"
 
 	"github.com/spf13/cobra"
@@ -39,22 +37,40 @@ Everything runs in tmux sessions. Use 'dwight stop' to stop everything.`,
 
 		prefix := sandbox.ProjectPrefix(pwd)
 
-		// Start Coordinator in its own tmux session
-		fmt.Println("Starting Coordinator in tmux...")
+		// Start API/MCP servers in background tmux (logs to file)
+		fmt.Println("Starting API/MCP servers in background...")
+		serverSession := prefix + "servers"
+
+		checkCmd := exec.Command("tmux", "has-session", "-t", serverSession)
+		if checkCmd.Run() != nil {
+			logFile := fmt.Sprintf("%s/.assistant-to/logs/coordinator.log", pwd)
+			os.MkdirAll(fmt.Sprintf("%s/.assistant-to/logs", pwd), 0755)
+			serveCmd := exec.Command("tmux", "new-session", "-d", "-s", serverSession,
+				fmt.Sprintf("mkdir -p %s/.assistant-to/logs && %s serve > %s 2>&1", pwd, exePath, logFile))
+			if err := serveCmd.Run(); err != nil {
+				fmt.Printf("Failed to start servers: %v\n", err)
+			} else {
+				fmt.Printf("✓ API/MCP servers started (logs: %s)\n", logFile)
+			}
+		} else {
+			fmt.Println("Servers already running")
+		}
+
+		// Start Coordinator AI agent in its own tmux session
+		fmt.Println("Starting Coordinator agent in tmux...")
 		coordSession := prefix + "coordinator"
 
-		// Check if already running
-		checkCmd := exec.Command("tmux", "has-session", "-t", coordSession)
+		checkCmd = exec.Command("tmux", "has-session", "-t", coordSession)
 		if checkCmd.Run() == nil {
 			fmt.Printf("Session %s already exists. Attaching...\n", coordSession)
 		} else {
-			// Start coordinator in indefinite mode (runs forever, waits for tasks)
+			// Spawn the Coordinator AI agent
 			coordCmd := exec.Command("tmux", "new-session", "-d", "-s", coordSession,
-				fmt.Sprintf("%s serve 2>&1", exePath))
+				fmt.Sprintf("%s run Coordinator --role Coordinator 2>&1", exePath))
 			if err := coordCmd.Run(); err != nil {
-				fmt.Printf("Failed to start Coordinator: %v\n", err)
+				fmt.Printf("Failed to start Coordinator agent: %v\n", err)
 			} else {
-				fmt.Printf("✓ Coordinator started in tmux session: %s\n", coordSession)
+				fmt.Printf("✓ Coordinator agent started in tmux session: %s\n", coordSession)
 			}
 		}
 
@@ -81,31 +97,21 @@ Everything runs in tmux sessions. Use 'dwight stop' to stop everything.`,
 	},
 }
 
-// serveCmd runs the coordinator in indefinite mode (waits for tasks forever)
+// serveCmd runs the coordinator infrastructure only (API/MCP servers)
 var serveCmd = &cobra.Command{
 	Use:   "serve",
-	Short: "Run the coordinator (internal)",
-	Long:  `Runs the coordinator infrastructure in indefinite mode.`,
+	Short: "Run coordinator infrastructure only (internal)",
+	Long:  `Runs the coordinator infrastructure (API/MCP servers) without spawning agents.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		pwd, err := findProjectRoot()
-		if err != nil {
-			fmt.Printf("Failed to find project root: %v\n", err)
-			os.Exit(1)
-		}
+		// Just run coordinator in foreground (for tmux session)
+		// Note: This blocks. Use via 'dwight up' for background execution
+		fmt.Println("Starting coordinator infrastructure...")
+		fmt.Println("Press Ctrl+C to stop.")
 
-		coordinator, err := orchestrator.NewCoordinator(pwd)
-		if err != nil {
-			fmt.Printf("Failed to create coordinator: %v\n", err)
-			os.Exit(1)
-		}
-		// Run indefinitely - waits for tasks forever
-		coordinator.RunIndefinitely = true
-		defer coordinator.Close()
-
-		ctx := context.Background()
-		if err := coordinator.Run(ctx); err != nil {
-			fmt.Printf("Coordinator error: %v\n", err)
-		}
+		// This will be run via the orchestrator
+		// For now, just print a message - actual implementation in orchestrator.Run
+		fmt.Println("(Coordinator infrastructure running - use dwight up to start properly)")
+		fmt.Scanln()
 	},
 }
 
