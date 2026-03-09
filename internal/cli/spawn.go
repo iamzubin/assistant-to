@@ -181,9 +181,9 @@ var runCmd = &cobra.Command{
 				},
 			},
 		}
-		opencodePath := filepath.Join(worktreeDir, "opencode.json")
+		opencodeCfgPath := filepath.Join(worktreeDir, "opencode.json")
 		opencodeData, _ := json.MarshalIndent(opencodeConfig, "", "  ")
-		os.WriteFile(opencodePath, opencodeData, 0644)
+		os.WriteFile(opencodeCfgPath, opencodeData, 0644)
 
 		// Generate Gemini settings.json
 		geminiConfig := map[string]interface{}{
@@ -220,9 +220,9 @@ var runCmd = &cobra.Command{
 				"AT_PROJECT_ROOT": pwd,
 			},
 		}
-		mcpPath := filepath.Join(worktreeDir, "mcp.json")
+		mcpCfgPath := filepath.Join(worktreeDir, "mcp.json")
 		mcpData, _ := json.MarshalIndent(mcpConfig, "", "  ")
-		os.WriteFile(mcpPath, mcpData, 0644)
+		os.WriteFile(mcpCfgPath, mcpData, 0644)
 
 		geminiPath, err := exec.LookPath("gemini")
 		if err != nil {
