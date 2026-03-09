@@ -722,24 +722,28 @@ func (c *Coordinator) watchForMerge(ctx context.Context) {
 	}
 }
 
-// spawnMerger spawns a Merger agent in the project root to merge all worktrees
-func (c *Coordinator) spawnMerger(ctx context.Context) error {
-	log.Printf("Coordinator: Spawning Merger agent in project root")
-
-	// Load config and prompts
-	configPath := filepath.Join(c.PWD, ".assistant-to", "config.yaml")
-	conf, err := config.Load(configPath)
-	if err != nil {
-		conf = config.Default()
+// getMainBranchPath returns the path to the main branch (project root)
+func (c *Coordinator) getMainBranchPath() string {
+	if c.Config.Project.Root != "" && c.Config.Project.Root != "." {
+		absRoot, err := filepath.Abs(c.Config.Project.Root)
+		if err == nil {
+			return absRoot
+		}
 	}
+	return c.PWD
+}
 
-	tool := conf.RuntimeForRole("merger")
-	model := conf.ModelForRole("merger")
+// spawnMerger spawns a Merger agent in the main branch to merge all worktrees
+func (c *Coordinator) spawnMerger(ctx context.Context) error {
+	mainBranchPath := c.getMainBranchPath()
+	log.Printf("Coordinator: Spawning Merger agent in main branch: %s", mainBranchPath)
 
-	// Load prompt
-	promptsPath := filepath.Join(c.PWD, ".assistant-to", "prompts")
+	tool := c.Config.RuntimeForRole("merger")
+	model := c.Config.ModelForRole("merger")
+
+	promptsPath := filepath.Join(mainBranchPath, ".assistant-to", "prompts")
 	if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
-		promptsPath = filepath.Join(c.PWD, "internal", "orchestrator", "prompts")
+		promptsPath = filepath.Join(mainBranchPath, "internal", "orchestrator", "prompts")
 	}
 	prompts, err := tasking.LoadPrompts(promptsPath)
 	if err != nil {
@@ -751,7 +755,6 @@ func (c *Coordinator) spawnMerger(ctx context.Context) error {
 		rolePrompt = "You are the Merger agent. Merge completed task branches into main."
 	}
 
-	// Get list of completed tasks
 	tasks, _ := c.DB.ListTasksByStatus("complete")
 	var taskList string
 	for _, task := range tasks {
@@ -771,30 +774,27 @@ Commands:
 - go build ./... && go test ./...   # Verify after merge
 `, rolePrompt, taskList)
 
-	// Write mission file in project root
-	missionPath := filepath.Join(c.PWD, ".merger_mission.md")
+	missionPath := filepath.Join(mainBranchPath, ".merger_mission.md")
 	if err := os.WriteFile(missionPath, []byte(mission), 0644); err != nil {
 		return fmt.Errorf("failed to write merger mission: %w", err)
 	}
 
-	// Generate MCP config for merger
-	if err := c.generateWorktreeMCPConfigs(c.PWD, "merger", "merger"); err != nil {
+	if err := c.generateWorktreeMCPConfigs(mainBranchPath, "merger", "merger"); err != nil {
 		log.Printf("Warning: failed to generate MCP configs for merger: %v", err)
 	}
 
-	_, mcpPort := c.Config.GetProjectPorts(c.PWD)
+	_, mcpPort := c.Config.GetProjectPorts(mainBranchPath)
 
 	geminiPath, err := exec.LookPath("gemini")
 	if err != nil {
-		geminiPath = "gemini" // Fallback
+		geminiPath = "gemini"
 	}
 
 	opencodePath, err := exec.LookPath("opencode")
 	if err != nil {
-		opencodePath = "opencode" // Fallback
+		opencodePath = "opencode"
 	}
 
-	// Build command - runs in project root
 	var agentCmd string
 	modelFlag := ""
 	if model != "auto" && model != "" {
@@ -810,16 +810,16 @@ Commands:
 		agentCmd = fmt.Sprintf(`%s %s--prompt "$(cat .merger_mission.md)"`, tool, modelFlag)
 	}
 
-	sessionName := sandbox.ProjectPrefix(c.PWD) + "merger"
+	sessionName := sandbox.ProjectPrefix(mainBranchPath) + "merger"
 	session := sandbox.TmuxSession{
 		SessionName: sessionName,
-		WorktreeDir: c.PWD, // Project root, not worktree
+		WorktreeDir: mainBranchPath,
 		Command:     agentCmd,
 		EnvVars: map[string]string{
 			"AT_AGENT_ROLE":                   "merger",
 			"AT_MCP_PORT":                     fmt.Sprintf("%d", mcpPort),
-			"AT_PROJECT_ROOT":                 c.PWD,
-			"GEMINI_CLI_SYSTEM_SETTINGS_PATH": filepath.Join(c.PWD, ".gemini", "settings.json"),
+			"AT_PROJECT_ROOT":                 mainBranchPath,
+			"GEMINI_CLI_SYSTEM_SETTINGS_PATH": filepath.Join(mainBranchPath, ".gemini", "settings.json"),
 		},
 	}
 
