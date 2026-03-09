@@ -529,53 +529,38 @@ func (m dashModel) View() string {
 	hBord := 4
 	vBord := 2
 
-	var leftPane, rightTopPane, rightBottomPane string
+	// Calculate widths based on what's visible
+	// Layout: [Tasks] [Agents] [Feed] or [Tasks] [Agents+Feed]
+	var leftPane, rightPane string
 
+	// Tasks pane (left side)
 	if m.showTasksPane {
-		leftWidth := (m.width * 35) / 100
+		leftWidth := (m.width * 30) / 100
 		leftPane = getStyle(0).Width(leftWidth - hBord).Height(m.height - vBord - 2).Render(m.taskList.View())
 	}
 
-	rightWidth := m.width
-	if m.showTasksPane {
-		rightWidth -= (m.width * 35) / 100
-	}
-
-	topRightHeight := 0
+	// Right side: Agents + Feed (stacked)
 	if m.showAgentsPane {
-		topRightHeight = (m.height * 40) / 100
-		rightTopPane = getStyle(1).Width(rightWidth - hBord).Height(topRightHeight - vBord).Render(m.agentList.View())
-	}
+		agentHeight := (m.height * 40) / 100
+		feedHeight := m.height - agentHeight - vBord - 2
 
-	feedHeight := m.height - topRightHeight - 2
-	rightBottomPane = getStyle(2).Width(rightWidth - hBord).Height(feedHeight - vBord).Render(m.feedList.View())
+		agentPane := getStyle(1).Width(m.width - hBord - ((m.width * 30) / 100)).Height(agentHeight - vBord).Render(m.agentList.View())
+		feedPane := getStyle(2).Width(m.width - hBord - ((m.width * 30) / 100)).Height(feedHeight).Render(m.feedList.View())
 
-	var rightCol string
-	if m.showAgentsPane {
-		rightCol = lipgloss.JoinVertical(lipgloss.Left, rightTopPane, rightBottomPane)
+		rightPane = lipgloss.JoinVertical(lipgloss.Left, agentPane, feedPane)
 	} else {
-		rightCol = rightBottomPane
+		// Just feed
+		rightPane = getStyle(2).Width(m.width - hBord - ((m.width * 30) / 100)).Height(m.height - vBord - 2).Render(m.feedList.View())
 	}
 
-	body := rightCol
-	if m.showTasksPane {
-		body = lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightCol)
-	}
-
-	if m.showCoordinatorPane {
-		coordWidth := m.width - lipgloss.Width(body)
-		coordView := lipgloss.NewStyle().
-			Width(coordWidth-hBord).
-			Height(m.height-vBord-2).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#00ADD8")).
-			Padding(0, 1).
-			Render(lipgloss.JoinVertical(lipgloss.Left,
-				lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00ADD8")).Render("Coordinator Live Output"),
-				"",
-				m.coordinatorBuffer,
-			))
-		body = lipgloss.JoinHorizontal(lipgloss.Top, body, coordView)
+	// Join panes
+	var body string
+	if m.showTasksPane && rightPane != "" {
+		body = lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+	} else if m.showTasksPane {
+		body = leftPane
+	} else {
+		body = rightPane
 	}
 
 	sortStr := "DESC"

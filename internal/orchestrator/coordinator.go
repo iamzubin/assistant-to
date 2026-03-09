@@ -105,6 +105,47 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		}
 	}
 
+	// If running indefinitely, loop forever checking for tasks
+	if c.RunIndefinitely {
+		return c.runLoop(ctx)
+	}
+
+	// Otherwise, run once
+	return c.runOnce(ctx)
+}
+
+// runLoop runs the coordinator in an infinite loop, checking for tasks periodically
+func (c *Coordinator) runLoop(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	fmt.Println("Coordinator: Running in indefinite mode. Waiting for tasks...")
+	fmt.Println("Press Ctrl+C to stop.")
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("Coordinator: Shutting down...")
+			return nil
+		case <-ticker.C:
+			tasks, err := c.DB.ListTasksByStatus("pending")
+			if err != nil {
+				log.Printf("Error listing tasks: %v", err)
+				continue
+			}
+
+			if len(tasks) > 0 {
+				log.Printf("Found %d pending task(s). Processing...", len(tasks))
+				if err := c.processTasks(ctx, tasks); err != nil {
+					log.Printf("Error processing tasks: %v", err)
+				}
+			}
+		}
+	}
+}
+
+// runOnce processes tasks once and exits
+func (c *Coordinator) runOnce(ctx context.Context) error {
 	log.Println("Coordinator: fetching pending tasks...")
 	tasks, err := c.DB.ListTasksByStatus("pending")
 	if err != nil {
@@ -112,16 +153,15 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	}
 
 	if len(tasks) == 0 {
-		if c.RunIndefinitely {
-			fmt.Println("No pending tasks found. Waiting for tasks... (Press Ctrl+C to stop)")
-			// Keep servers running and wait for context cancellation
-			<-ctx.Done()
-			return nil
-		}
 		fmt.Println("No pending tasks found. Add tasks with `dwight task add`, then run `dwight up` again.")
 		return nil
 	}
 
+	return c.processTasks(ctx, tasks)
+}
+
+// processTasks handles the actual task spawning logic
+func (c *Coordinator) processTasks(ctx context.Context, tasks []db.Task) error {
 	fmt.Printf("Found %d pending task(s). Spawning agents...\n", len(tasks))
 
 	// Enforce max concurrent agents limit

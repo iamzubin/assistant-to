@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 
+	"assistant-to/internal/orchestrator"
 	"assistant-to/internal/sandbox"
 
 	"github.com/spf13/cobra"
@@ -46,9 +48,9 @@ Everything runs in tmux sessions. Use 'dwight stop' to stop everything.`,
 		if checkCmd.Run() == nil {
 			fmt.Printf("Session %s already exists. Attaching...\n", coordSession)
 		} else {
-			// Start coordinator infrastructure + agent in background tmux
+			// Start coordinator in indefinite mode (runs forever, waits for tasks)
 			coordCmd := exec.Command("tmux", "new-session", "-d", "-s", coordSession,
-				fmt.Sprintf("%s start --agent 2>&1", exePath))
+				fmt.Sprintf("%s serve 2>&1", exePath))
 			if err := coordCmd.Run(); err != nil {
 				fmt.Printf("Failed to start Coordinator: %v\n", err)
 			} else {
@@ -76,6 +78,34 @@ Everything runs in tmux sessions. Use 'dwight stop' to stop everything.`,
 		fmt.Println()
 		fmt.Println("🎯 Run 'dwight attach' to connect to the Dashboard")
 		fmt.Println("🛑 Run 'dwight stop' to stop all sessions")
+	},
+}
+
+// serveCmd runs the coordinator in indefinite mode (waits for tasks forever)
+var serveCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Run the coordinator (internal)",
+	Long:  `Runs the coordinator infrastructure in indefinite mode.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		pwd, err := findProjectRoot()
+		if err != nil {
+			fmt.Printf("Failed to find project root: %v\n", err)
+			os.Exit(1)
+		}
+
+		coordinator, err := orchestrator.NewCoordinator(pwd)
+		if err != nil {
+			fmt.Printf("Failed to create coordinator: %v\n", err)
+			os.Exit(1)
+		}
+		// Run indefinitely - waits for tasks forever
+		coordinator.RunIndefinitely = true
+		defer coordinator.Close()
+
+		ctx := context.Background()
+		if err := coordinator.Run(ctx); err != nil {
+			fmt.Printf("Coordinator error: %v\n", err)
+		}
 	},
 }
 
@@ -113,5 +143,6 @@ var attachCmd = &cobra.Command{
 
 func init() {
 	RootCmd.AddCommand(upCmd)
+	RootCmd.AddCommand(serveCmd)
 	RootCmd.AddCommand(attachCmd)
 }
