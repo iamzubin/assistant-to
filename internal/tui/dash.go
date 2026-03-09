@@ -98,10 +98,10 @@ type dashModel struct {
 	newTaskDiff  string
 
 	// State
-	activePane          int // 0: Tasks, 1: Agents, 2: Feed
+	activePane          int // 0: Tasks, 1: Agents, 2: Feed, 3: Coordinator
 	showTasksPane       bool
 	showAgentsPane      bool
-	showCoordinatorPane bool
+	showCoordinatorPane bool // Default: true
 	feedSortDesc        bool
 	coordinatorBuffer   string
 
@@ -129,15 +129,16 @@ func NewDashModel(database *db.DB, projectRoot string) tea.Model {
 	fList.SetShowStatusBar(true) // Helpful for filtering counts
 
 	m := dashModel{
-		db:             database,
-		projectRoot:    projectRoot,
-		taskList:       tList,
-		agentList:      aList,
-		feedList:       fList,
-		activePane:     1, // Default to agents pane (agent mode)
-		showTasksPane:  true,
-		showAgentsPane: true,
-		feedSortDesc:   true,
+		db:                  database,
+		projectRoot:         projectRoot,
+		taskList:            tList,
+		agentList:           aList,
+		feedList:            fList,
+		activePane:          1, // Default to agents pane (agent mode)
+		showTasksPane:       true,
+		showAgentsPane:      true,
+		showCoordinatorPane: true, // Show coordinator by default
+		feedSortDesc:        true,
 
 		inactivePaneStyle: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -320,6 +321,9 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activePane = 2
 			}
 			m.resizePanes()
+		case "c":
+			m.showCoordinatorPane = !m.showCoordinatorPane
+			m.resizePanes()
 		}
 
 	case tea.WindowSizeMsg:
@@ -501,21 +505,26 @@ func (m *dashModel) refreshData() {
 	}
 }
 
+func boolStatus(b bool) string {
+	if b {
+		return "✓"
+	}
+	return "✗"
+}
+
 func (m dashModel) View() string {
 	if !m.ready {
 		return "\n  Initializing Dashboard..."
 	}
 
-	// If the Add Task form is active, overlay it
-	if m.taskForm != nil {
+	// If the Add Task form is active, overlay it (only when not in tmux)
+	if m.taskForm != nil && os.Getenv("TMUX") == "" {
 		formView := m.taskForm.View()
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#7D56F4")).
 			Padding(1, 3).
 			Render(formView)
-
-		// Center it rudimentary
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 	}
 
@@ -529,47 +538,66 @@ func (m dashModel) View() string {
 	hBord := 4
 	vBord := 2
 
-	// Calculate widths based on what's visible
-	// Layout: [Tasks] [Agents] [Feed] or [Tasks] [Agents+Feed]
-	var leftPane, rightPane string
+	// 4-panel grid: [Tasks 25%] [Agents 25%] [Feed 25%] [Coord 25%]
+	taskWidth := (m.width * 25) / 100
+	agentWidth := (m.width * 25) / 100
+	feedWidth := (m.width * 25) / 100
+	coordWidth := m.width - taskWidth - agentWidth - feedWidth - hBord*4
+	topHeight := (m.height * 55) / 100
 
-	// Tasks pane (left side)
+	// Build each pane
+	var taskPane, agentPane, feedPane, coordPane string
+
 	if m.showTasksPane {
-		leftWidth := (m.width * 30) / 100
-		leftPane = getStyle(0).Width(leftWidth - hBord).Height(m.height - vBord - 2).Render(m.taskList.View())
+		taskPane = getStyle(0).Width(taskWidth - hBord).Height(m.height - vBord - 2).Render(m.taskList.View())
 	}
 
-	// Right side: Agents + Feed (stacked)
 	if m.showAgentsPane {
-		agentHeight := (m.height * 40) / 100
-		feedHeight := m.height - agentHeight - vBord - 2
-
-		agentPane := getStyle(1).Width(m.width - hBord - ((m.width * 30) / 100)).Height(agentHeight - vBord).Render(m.agentList.View())
-		feedPane := getStyle(2).Width(m.width - hBord - ((m.width * 30) / 100)).Height(feedHeight).Render(m.feedList.View())
-
-		rightPane = lipgloss.JoinVertical(lipgloss.Left, agentPane, feedPane)
-	} else {
-		// Just feed
-		rightPane = getStyle(2).Width(m.width - hBord - ((m.width * 30) / 100)).Height(m.height - vBord - 2).Render(m.feedList.View())
+		agentPane = getStyle(1).Width(agentWidth - hBord).Height(m.height - vBord - 2).Render(m.agentList.View())
 	}
 
-	// Join panes
-	var body string
-	if m.showTasksPane && rightPane != "" {
-		body = lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+	feedPane = getStyle(2).Width(feedWidth - hBord).Height(topHeight - vBord).Render(m.feedList.View())
+
+	if m.showCoordinatorPane {
+		coordPane = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#00ADD8")).
+			Width(coordWidth).
+			Height(topHeight-vBord).
+			Padding(0, 1).
+			Render(lipgloss.JoinVertical(lipgloss.Left,
+				lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00ADD8")).Render("Coordinator"),
+				m.coordinatorBuffer,
+			))
+	}
+
+	// Top row: Tasks | Agents | Feed | Coord
+	topRow := ""
+	if m.showTasksPane && m.showAgentsPane && m.showCoordinatorPane {
+		topRow = lipgloss.JoinHorizontal(lipgloss.Top, taskPane, agentPane, feedPane, coordPane)
+	} else if m.showTasksPane && m.showAgentsPane {
+		topRow = lipgloss.JoinHorizontal(lipgloss.Top, taskPane, agentPane, feedPane)
 	} else if m.showTasksPane {
-		body = leftPane
+		topRow = lipgloss.JoinHorizontal(lipgloss.Top, taskPane, feedPane)
+	} else if m.showAgentsPane {
+		topRow = lipgloss.JoinHorizontal(lipgloss.Top, agentPane, feedPane)
 	} else {
-		body = rightPane
+		topRow = feedPane
 	}
+
+	// Status indicators
+	coordStatus := boolStatus(m.showCoordinatorPane)
+	taskStatus := boolStatus(m.showTasksPane)
+	agentStatus := boolStatus(m.showAgentsPane)
 
 	sortStr := "DESC"
 	if !m.feedSortDesc {
 		sortStr = "ASC"
 	}
 
-	footerText := fmt.Sprintf(" Global Commands: [n] new task • [enter] attach agent • [t] toggle tasks • [a] toggle agents • [s] sort feed (%s) • [/] filter • [tab] focus • [q] quit ", sortStr)
+	footerText := fmt.Sprintf(" [n] new • [enter] attach • [t] %s tasks • [a] %s agents • [c] %s coord • [s] %s • [q] quit ",
+		taskStatus, agentStatus, coordStatus, sortStr)
 	footer := m.footerStyle.Width(m.width).Align(lipgloss.Right).Render(footerText)
 
-	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, topRow, footer)
 }
