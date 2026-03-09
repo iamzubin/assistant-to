@@ -256,6 +256,11 @@ func (t *Tier1Watchdog) detectInputRequired(transcript string) bool {
 		"confirm",
 		"password:",
 		"username:",
+		"are you sure?",
+		"overwrite?",
+		"delete?",
+		"force?",
+		"commit message:",
 	}
 
 	for _, pattern := range patterns {
@@ -365,9 +370,9 @@ func (t *Tier1Watchdog) sendStimulus(ctx context.Context, agentID string, analys
 
 	switch analysis.FailureMode {
 	case FailureModeInputRequired:
-		// Send 'y' or Enter to auto-confirm
-		log.Printf("Tier1: Sending auto-confirmation keystrokes to %s", agentID)
-		err := session.SendKeys("y")
+		// Send 'y' and Enter (C-m) to auto-confirm
+		log.Printf("Tier1: Sending auto-confirmation keystrokes (y + C-m) to %s", agentID)
+		err := session.SendKeys("y", "C-m")
 		if err != nil {
 			return fmt.Errorf("failed to send keystrokes: %w", err)
 		}

@@ -33,7 +33,10 @@ You are responsible for the entire pipeline: `pending` → `started` → `scoute
     - **Scout Done**: Creation of findings mail → `task_update(id, "scouted")` → `agent_spawn(id, "Builder")`.
     - **Builder Done**: Creation of completion mail → `task_update(id, "review")` → `agent_spawn(id, "Reviewer")`.
     - **Reviewer Done**: Verdict mail → if PASS: `task_update(id, "merging")` → `agent_spawn(id, "Merger")`.
-- **Merge Completion**: Once the Merger reports success → `task_update(id, "complete")` → `cleanup(id)`.
+- **Merge & Cleanup**:
+    - **CRITICAL**: Before using `cleanup(id)`, you **MUST** ensure the task's worktree has been merged into the base branch using `worktree_merge(id)`.
+    - **Sequential Dependencies**: If Task B depends on Task A, you must `worktree_merge(id=A)` (and ideally `cleanup(id=A)`) before spawning the agent for Task B. This ensures Task B's worktree (which is created from the latest base branch) contains Task A's changes.
+    - **Merger Completion**: Once the Merger reports success (or you perform a manual `worktree_merge`) → `task_update(id, "complete")` → `cleanup(id)`.
 
 ## Task Routing
 - **Simple** (single file, <50 lines): Builder only
@@ -41,6 +44,7 @@ You are responsible for the entire pipeline: `pending` → `started` → `scoute
 
 ## Agent Management & Handoffs
 - **Spawning**: Use `agent_spawn(task_id, role)`. 
+- **Non-Interactive Mode**: When spawning agents or giving instructions, ensure they use non-interactive flags for their tools (e.g., `--approval-mode=yolo` for `gemini`, `--yes` or `-y` for package managers).
 - **Naming**: Agents identify as `role-task_id` (e.g., `builder-1`). Use this exact string for `buffer_capture` and `session_kill`.
 - **Handoff Protocol**:
     1. **Scout** completes → check mail for findings → `agent_spawn(id, "Builder")`.

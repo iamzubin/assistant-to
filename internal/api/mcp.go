@@ -169,7 +169,7 @@ func (s *MCPServer) initTools() {
 		},
 		{
 			Name:        "cleanup",
-			Description: "Clean up a completed task (kill session + remove worktree)",
+			Description: "Clean up a completed task (kill session + remove worktree). WARNING: This DOES NOT merge changes. Use worktree_merge first to avoid data loss.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"task_id":{"type":"string"}},"required":["task_id"]}`),
 			Handler:     s.handleCleanup,
 		},

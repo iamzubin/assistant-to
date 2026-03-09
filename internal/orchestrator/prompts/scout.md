@@ -13,8 +13,9 @@ Analyze the codebase to understand task scope before implementation begins.
 5. Report findings via mail system
 6. Mark completion by creating `.scout_complete` file
 
-## Decision Making
-- **NEVER ask for user input** - explore independently
+## Verification & Tools
+- **Non-Interactive Tools**: When using CLI tools (e.g., `grep`, `find`, `gemini`), **ALWAYS** use non-interactive or "auto-confirm" flags (e.g., `-y`, `--yes`, `--approval-mode=yolo`) to avoid being blocked by confirmation prompts.
+- **NEVER wait for user input** - explore independently.
 - Make reasonable assumptions about scope
 - Document all findings clearly in your report
 

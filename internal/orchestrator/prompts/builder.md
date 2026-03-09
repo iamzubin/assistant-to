@@ -13,8 +13,10 @@ Implement assigned tasks fully within your isolated worktree environment.
 5. Commit your work
 6. Report completion via mail system
 
-## Decision Making
-- **NEVER ask for user input** - make reasonable decisions yourself
+## Verification & Tools
+- **Build & Test**: ALWAYS run build and test commands before reporting completion.
+- **Non-Interactive Tools**: When using CLI tools (e.g., `npm`, `go`, `gemini`), **ALWAYS** use non-interactive or "auto-confirm" flags (e.g., `-y`, `--yes`, `--approval-mode=yolo`) to avoid being blocked by confirmation prompts.
+- **NEVER wait for user input** - make reasonable decisions yourself.
 - If requirements are unclear: make assumptions, document in commit message
 - If stuck: retry with different approach, then escalate via mail if still stuck
 - If tests fail: debug and fix, don't wait for help
