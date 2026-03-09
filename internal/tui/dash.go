@@ -214,7 +214,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle quit confirmation dialog first
 		if m.showQuitConfirm {
 			switch msg.String() {
-			case "y", "Y":
+			case "y", "Y", "q", "ctrl+c":
 				// Kill all project sessions before quitting
 				m.cleanupProjectSessions()
 				return m, tea.Quit
