@@ -9,12 +9,31 @@ import (
 
 // CreateWorktree creates a new git worktree for a specific task.
 // It creates a new branch named "at-<taskID>" based on the provided baseBranch.
+// If the worktree or branch already exists, they will be cleaned up first.
 // Returns the absolute path to the created worktree directory.
-func CreateWorktree(repoDir string, taskID string, baseBranch string) (string, error) {
-	worktreeDir := filepath.Join(repoDir, ".assistant-to", "worktrees", taskID)
+func CreateWorktree(repoDir string, taskID string, baseBranch string, worktreesDir string) (string, error) {
+	if worktreesDir == "" {
+		worktreesDir = filepath.Join(repoDir, ".assistant-to", "worktrees")
+	}
+	worktreeDir := filepath.Join(worktreesDir, taskID)
 	branchName := "at-" + taskID
 
-	// git -C repoDir worktree add .assistant-to/worktrees/<task-id> -b at-<task-id> <baseBranch>
+	// First, try to remove any existing worktree (this also removes the branch if it's checked out there)
+	rmCmd := exec.Command("git", "-C", repoDir, "worktree", "remove", worktreeDir, "--force")
+	rmCmd.CombinedOutput() // Ignore error - worktree might not exist
+
+	// Clean up the directory if it still exists
+	os.RemoveAll(worktreeDir)
+
+	// Check if branch still exists (might be checked out elsewhere or not associated with worktree)
+	branchCheckCmd := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", branchName)
+	if _, err := branchCheckCmd.CombinedOutput(); err == nil {
+		// Branch exists, try to delete it
+		delBranchCmd := exec.Command("git", "-C", repoDir, "branch", "-D", branchName)
+		delBranchCmd.CombinedOutput() // Ignore error
+	}
+
+	// Now create the new worktree and branch
 	cmd := exec.Command("git", "-C", repoDir, "worktree", "add", worktreeDir, "-b", branchName, baseBranch)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -44,8 +63,11 @@ func MergeWorktree(taskID string, baseBranch string, repoDir string) error {
 }
 
 // TeardownWorktree removes the worktree and deletes the associated branch.
-func TeardownWorktree(taskID string, repoDir string) error {
-	worktreeDir := filepath.Join(repoDir, ".assistant-to", "worktrees", taskID)
+func TeardownWorktree(taskID string, repoDir string, worktreesDir string) error {
+	if worktreesDir == "" {
+		worktreesDir = filepath.Join(repoDir, ".assistant-to", "worktrees")
+	}
+	worktreeDir := filepath.Join(worktreesDir, taskID)
 	branchName := "at-" + taskID
 
 	// Remove worktree
@@ -65,9 +87,11 @@ func TeardownWorktree(taskID string, repoDir string) error {
 }
 
 // TeardownAllWorktrees removes all managed worktrees and their associated branches.
-func TeardownAllWorktrees(repoDir string) error {
-	worktreesRoot := filepath.Join(repoDir, ".assistant-to", "worktrees")
-	entries, err := os.ReadDir(worktreesRoot)
+func TeardownAllWorktrees(repoDir string, worktreesDir string) error {
+	if worktreesDir == "" {
+		worktreesDir = filepath.Join(repoDir, ".assistant-to", "worktrees")
+	}
+	entries, err := os.ReadDir(worktreesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -80,7 +104,7 @@ func TeardownAllWorktrees(repoDir string) error {
 		if entry.IsDir() {
 			taskID := entry.Name()
 			fmt.Printf("Tearing down worktree for task %s...\n", taskID)
-			if err := TeardownWorktree(taskID, repoDir); err != nil {
+			if err := TeardownWorktree(taskID, repoDir, worktreesDir); err != nil {
 				errors = append(errors, fmt.Errorf("task %s: %w", taskID, err))
 			}
 		}

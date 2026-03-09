@@ -70,20 +70,39 @@ type LoggingConfig struct {
 	RedactSecrets bool `yaml:"redactSecrets"`
 }
 
+// AgentRuntimeConfig holds runtime and allowed tools for a specific agent role
+type AgentRuntimeConfig struct {
+	Runtime      string   `yaml:"runtime"`      // "gemini", "opencode", "cli"
+	Model        string   `yaml:"model"`        // Model to use for this agent
+	AllowedTools []string `yaml:"allowedTools"` // List of allowed tools: "mail", "log", "task", "buffer", "session", "worktree"
+	MCPPort      int      `yaml:"mcpPort"`      // MCP server port for this agent
+}
+
+// APIConfig holds REST API server settings
+type APIConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	Host       string `yaml:"host"`
+	Port       int    `yaml:"port"`
+	MCPEnabled bool   `yaml:"mcpEnabled"`
+	MCPPort    int    `yaml:"mcpPort"`
+}
+
 // Config represents the user's project-level configuration.
 type Config struct {
-	Tool        string            `yaml:"tool"`
-	ModelLarge  string            `yaml:"model_large"`
-	ModelMedium string            `yaml:"model_medium"`
-	ModelFast   string            `yaml:"model_fast"`
-	Project     ProjectConfig     `yaml:"project"`
-	Agents      AgentsConfig      `yaml:"agents"`
-	Worktrees   WorktreesConfig   `yaml:"worktrees"`
-	TaskTracker TaskTrackerConfig `yaml:"taskTracker"`
-	Mulch       MulchConfig       `yaml:"mulch"`
-	Merge       MergeConfig       `yaml:"merge"`
-	Watchdog    WatchdogConfig    `yaml:"watchdog"`
-	Logging     LoggingConfig     `yaml:"logging"`
+	Tool        string                        `yaml:"tool"`
+	ModelLarge  string                        `yaml:"model_large"`
+	ModelMedium string                        `yaml:"model_medium"`
+	ModelFast   string                        `yaml:"model_fast"`
+	Project     ProjectConfig                 `yaml:"project"`
+	Agents      AgentsConfig                  `yaml:"agents"`
+	Worktrees   WorktreesConfig               `yaml:"worktrees"`
+	TaskTracker TaskTrackerConfig             `yaml:"taskTracker"`
+	Mulch       MulchConfig                   `yaml:"mulch"`
+	Merge       MergeConfig                   `yaml:"merge"`
+	Watchdog    WatchdogConfig                `yaml:"watchdog"`
+	Logging     LoggingConfig                 `yaml:"logging"`
+	API         APIConfig                     `yaml:"api"`
+	AgentsRT    map[string]AgentRuntimeConfig `yaml:"agentsRuntime"` // Per-agent runtime config: coordinator, builder, scout, reviewer, merger
 }
 
 // Default returns a default configuration object.
@@ -138,6 +157,45 @@ func Default() *Config {
 			Verbose:       false,
 			RedactSecrets: true,
 		},
+		API: APIConfig{
+			Enabled:    true,
+			Host:       "127.0.0.1",
+			Port:       8765,
+			MCPEnabled: true,
+			MCPPort:    8766,
+		},
+		AgentsRT: map[string]AgentRuntimeConfig{
+			"coordinator": {
+				Runtime:      "gemini",
+				Model:        "gemini-2.5-pro",
+				AllowedTools: []string{"mail", "log", "task", "spawn", "buffer", "session", "cleanup", "worktree", "dash"},
+				MCPPort:      8766,
+			},
+			"builder": {
+				Runtime:      "gemini",
+				Model:        "gemini-2.5-flash",
+				AllowedTools: []string{"mail", "log", "buffer"},
+				MCPPort:      8767,
+			},
+			"scout": {
+				Runtime:      "gemini",
+				Model:        "gemini-2.5-flash",
+				AllowedTools: []string{"mail", "log", "buffer"},
+				MCPPort:      8768,
+			},
+			"reviewer": {
+				Runtime:      "gemini",
+				Model:        "gemini-2.5-flash",
+				AllowedTools: []string{"mail", "log", "buffer"},
+				MCPPort:      8769,
+			},
+			"merger": {
+				Runtime:      "gemini",
+				Model:        "gemini-2.5-flash",
+				AllowedTools: []string{"mail", "log", "worktree", "buffer"},
+				MCPPort:      8770,
+			},
+		},
 	}
 }
 
@@ -165,6 +223,10 @@ func Load(path string) (*Config, error) {
 // ModelForRole returns the appropriate model string for a given agent role.
 // Roles: "Coordinator" -> large, "Scout" -> fast, all others -> medium.
 func (c *Config) ModelForRole(role string) string {
+	// Check for role-specific override first
+	if rt, ok := c.AgentsRT[role]; ok && rt.Model != "" {
+		return rt.Model
+	}
 	switch role {
 	case "Coordinator":
 		return c.ModelLarge
@@ -173,6 +235,45 @@ func (c *Config) ModelForRole(role string) string {
 	default: // Builder, Reviewer, Merger
 		return c.ModelMedium
 	}
+}
+
+// RuntimeForRole returns the runtime (gemini/opencode/cli) for a given agent role.
+func (c *Config) RuntimeForRole(role string) string {
+	// Check for role-specific override first
+	if rt, ok := c.AgentsRT[role]; ok && rt.Runtime != "" {
+		return rt.Runtime
+	}
+	// Fall back to global tool setting
+	if c.Tool != "" {
+		return c.Tool
+	}
+	return "gemini"
+}
+
+// AllowedToolsForRole returns the list of allowed tools for a given agent role.
+func (c *Config) AllowedToolsForRole(role string) []string {
+	if rt, ok := c.AgentsRT[role]; ok && len(rt.AllowedTools) > 0 {
+		return rt.AllowedTools
+	}
+	// Default allowed tools if not specified
+	switch role {
+	case "Coordinator":
+		return []string{"mail", "log", "task", "spawn", "buffer", "session", "cleanup", "worktree", "dash"}
+	case "Builder", "Scout", "Reviewer":
+		return []string{"mail", "log", "buffer"}
+	case "Merger":
+		return []string{"mail", "log", "worktree", "buffer"}
+	default:
+		return []string{"mail", "log"}
+	}
+}
+
+// MCPPortForRole returns the MCP port for a given agent role.
+func (c *Config) MCPPortForRole(role string) int {
+	if rt, ok := c.AgentsRT[role]; ok && rt.MCPPort > 0 {
+		return rt.MCPPort
+	}
+	return c.API.MCPPort
 }
 
 // GetWatchdogCheckInterval returns the health check interval with default fallback
@@ -237,9 +338,30 @@ func (c *Config) GetPrimeFormat() string {
 	return "markdown"
 }
 
+// GetWorktreesDir returns the worktrees directory path
+func (c *Config) GetWorktreesDir(projectRoot string) string {
+	if c.Worktrees.BaseDir != "" {
+		return filepath.Join(projectRoot, c.Worktrees.BaseDir)
+	}
+	return filepath.Join(projectRoot, ".assistant-to", "worktrees")
+}
+
+// GetAgentsBaseDir returns the agents base directory path
+func (c *Config) GetAgentsBaseDir(projectRoot string) string {
+	if c.Agents.BaseDir != "" {
+		return filepath.Join(projectRoot, c.Agents.BaseDir)
+	}
+	return filepath.Join(projectRoot, ".assistant-to", "agent-defs")
+}
+
 // IsReimagineEnabled returns whether reimagine merge strategy is enabled
 func (c *Config) IsReimagineEnabled() bool {
 	return c.Merge.ReimagineEnabled
+}
+
+// IsAIResolveEnabled returns whether AI-assisted merge resolution is enabled
+func (c *Config) IsAIResolveEnabled() bool {
+	return c.Merge.AIResolveEnabled
 }
 
 // IsScoutEnabled returns whether Scout agent is enabled
@@ -253,6 +375,24 @@ func (c *Config) GetScoutWaitDuration() time.Duration {
 		return time.Duration(c.Agents.ScoutWaitSec) * time.Second
 	}
 	return 10 * time.Minute
+}
+
+// IsTaskTrackerEnabled returns whether task tracking features are enabled
+// Note: Currently defined but not actively gating any functionality
+func (c *Config) IsTaskTrackerEnabled() bool {
+	return c.TaskTracker.Enabled
+}
+
+// IsMulchEnabled returns whether mulch/intelligence features are enabled
+// Note: Currently defined but intelligence features are always available
+func (c *Config) IsMulchEnabled() bool {
+	return c.Mulch.Enabled
+}
+
+// GetMulchDomains returns the domains for mulch analysis
+// Note: Currently defined but not actively used
+func (c *Config) GetMulchDomains() []string {
+	return c.Mulch.Domains
 }
 
 // Save writes the current configuration to the specified path as YAML.

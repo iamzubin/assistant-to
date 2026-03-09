@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -34,8 +35,8 @@ var initCmd = &cobra.Command{
 This must be run once per project before launching the orchestrator or any agents.
 
 For automated/non-interactive initialization, use flags:
-  at init --tool=gemini --non-interactive
-  at init --tool=opencode --project-name=myapp --max-agents=10`,
+  dwight init --tool=gemini --non-interactive
+  dwight init --tool=opencode --project-name=myapp --max-agents=10`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runInit()
 	},
@@ -346,6 +347,45 @@ func runInit() error {
 			Verbose:       false,
 			RedactSecrets: true,
 		},
+		API: config.APIConfig{
+			Enabled:    true,
+			Host:       "127.0.0.1",
+			Port:       8765,
+			MCPEnabled: true,
+			MCPPort:    8766,
+		},
+		AgentsRT: map[string]config.AgentRuntimeConfig{
+			"coordinator": {
+				Runtime:      tool,
+				Model:        modelLarge,
+				AllowedTools: []string{"mail", "log", "task", "spawn", "buffer", "session", "cleanup", "worktree", "dash"},
+				MCPPort:      8766,
+			},
+			"builder": {
+				Runtime:      tool,
+				Model:        modelMedium,
+				AllowedTools: []string{"mail", "log", "buffer"},
+				MCPPort:      8767,
+			},
+			"scout": {
+				Runtime:      tool,
+				Model:        modelFast,
+				AllowedTools: []string{"mail", "log", "buffer"},
+				MCPPort:      8768,
+			},
+			"reviewer": {
+				Runtime:      tool,
+				Model:        modelMedium,
+				AllowedTools: []string{"mail", "log", "buffer"},
+				MCPPort:      8769,
+			},
+			"merger": {
+				Runtime:      tool,
+				Model:        modelMedium,
+				AllowedTools: []string{"mail", "log", "worktree", "buffer"},
+				MCPPort:      8770,
+			},
+		},
 	}
 	configPath := filepath.Join(baseDir, "config.yaml")
 	if err := conf.Save(configPath); err != nil {
@@ -366,7 +406,14 @@ func runInit() error {
 	}
 	fmt.Printf("%s Initialized state database: %s\n", successStyle.Render("✓"), infoStyle.Render(dbPath))
 
-	// Step 6: Gitignore
+	// Step 6: Generate MCP config files for tools
+	if err := generateMCPConfigs(baseDir, &conf); err != nil {
+		fmt.Printf("%s Warning: failed to generate MCP configs: %v\n", infoStyle.Render("!"), err)
+	} else {
+		fmt.Printf("%s Generated MCP configuration files\n", successStyle.Render("✓"))
+	}
+
+	// Step 7: Gitignore
 	var addToGitignore bool = false
 	err = huh.NewForm(
 		huh.NewGroup(
@@ -479,6 +526,211 @@ func copyDefaultPrompts(destDir string) error {
 
 	if copied == 0 {
 		return fmt.Errorf("no prompt files found to copy")
+	}
+
+	// Copy MCP subdirectory
+	mcpSourceDir := filepath.Join(sourceDir, "mcp")
+	mcpDestDir := filepath.Join(destDir, "mcp")
+
+	if info, err := os.Stat(mcpSourceDir); err == nil && info.IsDir() {
+		if err := os.MkdirAll(mcpDestDir, 0755); err != nil {
+			return fmt.Errorf("failed to create mcp prompts directory: %w", err)
+		}
+
+		mcpEntries, err := os.ReadDir(mcpSourceDir)
+		if err != nil {
+			return fmt.Errorf("failed to read mcp prompts: %w", err)
+		}
+
+		for _, entry := range mcpEntries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+
+			srcPath := filepath.Join(mcpSourceDir, entry.Name())
+			dstPath := filepath.Join(mcpDestDir, entry.Name())
+
+			content, err := os.ReadFile(srcPath)
+			if err != nil {
+				return fmt.Errorf("failed to read mcp %s: %w", entry.Name(), err)
+			}
+
+			if err := os.WriteFile(dstPath, content, 0644); err != nil {
+				return fmt.Errorf("failed to write mcp %s: %w", entry.Name(), err)
+			}
+			copied++
+		}
+	}
+
+	return nil
+}
+
+// generateMCPConfigs creates MCP configuration files for opencode and gemini
+func generateMCPConfigs(baseDir string, cfg *config.Config) error {
+	mcpDir := filepath.Join(baseDir, "mcp-configs")
+	if err := os.MkdirAll(mcpDir, 0755); err != nil {
+		return fmt.Errorf("failed to create mcp-configs directory: %w", err)
+	}
+
+	// Get project root (parent of .assistant-to)
+	projectRoot := filepath.Dir(baseDir)
+	mcpPort := cfg.MCPPortForRole("coordinator")
+
+	// Generate coordinator MCP configs in PROJECT ROOT (not .assistant-to)
+	// The coordinator runs from the main project directory
+
+	// 1. opencode.json for opencode (correct format per docs)
+	opencodeConfig := map[string]interface{}{
+		"$schema": "https://opencode.ai/config.json",
+		"mcp": map[string]interface{}{
+			"assistant-to": map[string]interface{}{
+				"type":    "local",
+				"command": []string{"dwight", "mcp", "serve"},
+				"enabled": true,
+				"environment": map[string]string{
+					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+					"AT_AGENT_ROLE":   "coordinator",
+					"AT_PROJECT_ROOT": projectRoot,
+				},
+			},
+		},
+	}
+
+	opencodePath := filepath.Join(projectRoot, "opencode.json")
+	opencodeData, err := json.MarshalIndent(opencodeConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal coordinator opencode config: %w", err)
+	}
+	if err := os.WriteFile(opencodePath, opencodeData, 0644); err != nil {
+		return fmt.Errorf("failed to write coordinator opencode config: %w", err)
+	}
+
+	// 2. .gemini/settings.json for Gemini CLI
+	geminiConfig := map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"assistant-to": map[string]interface{}{
+				"command": "dwight",
+				"args":    []string{"mcp", "serve"},
+				"env": map[string]string{
+					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+					"AT_AGENT_ROLE":   "coordinator",
+					"AT_PROJECT_ROOT": projectRoot,
+				},
+			},
+		},
+	}
+
+	geminiDir := filepath.Join(projectRoot, ".gemini")
+	if err := os.MkdirAll(geminiDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .gemini directory: %w", err)
+	}
+	geminiPath := filepath.Join(geminiDir, "settings.json")
+	geminiData, err := json.MarshalIndent(geminiConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal coordinator gemini config: %w", err)
+	}
+	if err := os.WriteFile(geminiPath, geminiData, 0644); err != nil {
+		return fmt.Errorf("failed to write coordinator gemini config: %w", err)
+	}
+
+	// 2. claude_desktop_config.json for Claude Desktop
+	claudeConfig := map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"assistant-to": map[string]interface{}{
+				"command": "dwight",
+				"args":    []string{"mcp", "serve"},
+				"env": map[string]string{
+					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+					"AT_AGENT_ROLE":   "coordinator",
+					"AT_PROJECT_ROOT": projectRoot,
+				},
+			},
+		},
+	}
+
+	claudePath := filepath.Join(projectRoot, "claude_desktop_config.json")
+	claudeData, err := json.MarshalIndent(claudeConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal coordinator claude config: %w", err)
+	}
+	if err := os.WriteFile(claudePath, claudeData, 0644); err != nil {
+		return fmt.Errorf("failed to write coordinator claude config: %w", err)
+	}
+
+	// 3. mcp.json generic config
+	mcpConfig := map[string]interface{}{
+		"name":        "assistant-to",
+		"description": "Assistant-to Coordinator MCP server",
+		"transport":   "stdio",
+		"command":     "dwight",
+		"args":        []string{"mcp", "serve"},
+		"env": map[string]string{
+			"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+			"AT_AGENT_ROLE":   "coordinator",
+			"AT_PROJECT_ROOT": projectRoot,
+		},
+	}
+
+	mcpPath := filepath.Join(projectRoot, "mcp.json")
+	mcpData, err := json.MarshalIndent(mcpConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal coordinator mcp config: %w", err)
+	}
+	if err := os.WriteFile(mcpPath, mcpData, 0644); err != nil {
+		return fmt.Errorf("failed to write coordinator mcp config: %w", err)
+	}
+
+	// 4. Template configs in mcp-configs directory (for reference/copying)
+	templateConfig := map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"assistant-to": map[string]interface{}{
+				"command": "dwight",
+				"args":    []string{"mcp", "serve"},
+				"env": map[string]string{
+					"AT_MCP_PORT": "{{PORT}}",
+				},
+			},
+		},
+	}
+
+	templatePath := filepath.Join(mcpDir, "template-mcp.json")
+	templateData, _ := json.MarshalIndent(templateConfig, "", "  ")
+	if err := os.WriteFile(templatePath, templateData, 0644); err != nil {
+		return fmt.Errorf("failed to write template mcp config: %w", err)
+	}
+
+	// 5. Create README
+	readmeContent := "# MCP Configuration Files\n\n" +
+		"This directory contains MCP (Model Context Protocol) configuration templates.\n\n" +
+		"## Generated Files (in project root)\n\n" +
+		"The following files have been created in your PROJECT ROOT:\n" +
+		"- **opencode.json**: Opencode MCP config for the Coordinator\n" +
+		"- **.gemini/settings.json**: Gemini CLI MCP config\n" +
+		"- **claude_desktop_config.json**: Claude Desktop MCP config\n" +
+		"- **mcp.json**: Generic MCP config\n\n" +
+		"## Usage\n\n" +
+		"### Opencode\n\n" +
+		"The opencode.json in your project root configures opencode to connect to the assistant-to MCP server.\n" +
+		"Opencode automatically reads this file when run from the project directory.\n\n" +
+		"### Gemini CLI\n\n" +
+		"The .gemini/settings.json in your project root configures Gemini CLI to connect to the assistant-to MCP server.\n" +
+		"Gemini CLI automatically reads this file when run from the project directory.\n\n" +
+		"### Claude Desktop\n\n" +
+		"Copy claude_desktop_config.json to your Claude Desktop config:\n\n" +
+		"```bash\n" +
+		"# macOS\n" +
+		"cp claude_desktop_config.json ~/Library/Application\\ Support/Claude/claude_desktop_config.json\n" +
+		"# Windows\n" +
+		"copy claude_desktop_config.json \"%AppData%\\Claude\\claude_desktop_config.json\"\n" +
+		"```\n\n" +
+		"## Agent Roles\n\n" +
+		"- **Coordinator** (project root): Full access - runs `dwight up`\n" +
+		"- **Builder/Scout/Reviewer/Merger** (worktrees): Limited access - spawned by coordinator\n\n" +
+		"Each worktree gets its own MCP config when an agent is spawned.\n"
+
+	readmePath := filepath.Join(mcpDir, "README.md")
+	if err := os.WriteFile(readmePath, []byte(readmeContent), 0644); err != nil {
+		return fmt.Errorf("failed to write mcp readme: %w", err)
 	}
 
 	return nil

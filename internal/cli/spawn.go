@@ -22,12 +22,11 @@ var (
 	spawnPrompt string
 )
 
-var spawnCmd = &cobra.Command{
-	Use:   "spawn <task-id>",
-	Short: "Manually spawn a tmux sandbox for an agent",
-	Long: `Creates an isolated worktree and spawns a new tmux session for an agent targeting the specified task.
-This simulates the orchestrator launching a task manually for testing and debugging.`,
-	Args: cobra.ExactArgs(1),
+var runCmd = &cobra.Command{
+	Use:   "run <task-id>",
+	Short: "Run an agent for a specific task",
+	Long:  `Creates an isolated worktree and spawns a new tmux session for an agent targeting the specified task.`,
+	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		taskID := args[0]
 		pwd, err := findProjectRoot()
@@ -42,7 +41,7 @@ This simulates the orchestrator launching a task manually for testing and debugg
 			worktreeDir = pwd
 		} else if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
 			fmt.Printf("Worktree not found, attempting to create it on 'main'...\n")
-			_, err = sandbox.CreateWorktree(pwd, taskID, "main")
+			_, err = sandbox.CreateWorktree(pwd, taskID, "main", "")
 			if err != nil {
 				fmt.Printf("Failed to create worktree: %v\n", err)
 				os.Exit(1)
@@ -88,6 +87,19 @@ This simulates the orchestrator launching a task manually for testing and debugg
 				finalPrompt = prompts.Get(role)
 				if finalPrompt == "" {
 					fmt.Printf("Warning: no prompt found for role %q\n", role)
+				}
+
+				// For Coordinator role, inject MCP documentation
+				if role == "Coordinator" {
+					mcpContent := prompts.GetMCP("coordinator")
+					if mcpContent != "" {
+						mcpPort := conf.MCPPortForRole("coordinator")
+						apiPort := conf.API.Port
+						mcpContent = strings.ReplaceAll(mcpContent, "{{.MCPPort}}", fmt.Sprintf("%d", mcpPort))
+						mcpContent = strings.ReplaceAll(mcpContent, "{{.APIPort}}", fmt.Sprintf("%d", apiPort))
+						mcpContent = strings.ReplaceAll(mcpContent, "{{.TaskID}}", "Coordinator")
+						finalPrompt = finalPrompt + "\n\n" + mcpContent
+					}
 				}
 			} else {
 				fmt.Printf("Warning: failed to load prompts: %v\n", err)
@@ -151,7 +163,7 @@ This simulates the orchestrator launching a task manually for testing and debugg
 			fmt.Printf("Error spawning session: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Success! Run 'at connect %s' to attach.\n", taskID)
+		fmt.Printf("Success! Run 'dwight connect %s' to attach.\n", taskID)
 	},
 }
 
@@ -191,10 +203,10 @@ Useful for observing the agent's live shell output or intervening directly.`,
 }
 
 func init() {
-	spawnCmd.Flags().StringVarP(&spawnModel, "model", "m", "", "Model for the agent to use")
-	spawnCmd.Flags().StringVarP(&spawnRole, "role", "r", "Builder", "Role of the agent (e.g., Builder, Reviewer)")
-	spawnCmd.Flags().StringVarP(&spawnPrompt, "prompt", "p", "", "Initial prompt or context for the agent")
+	runCmd.Flags().StringVarP(&spawnModel, "model", "m", "", "Model for the agent to use")
+	runCmd.Flags().StringVarP(&spawnRole, "role", "r", "Builder", "Role of the agent (e.g., Builder, Reviewer)")
+	runCmd.Flags().StringVarP(&spawnPrompt, "prompt", "p", "", "Initial prompt or context for the agent")
 
-	RootCmd.AddCommand(spawnCmd)
+	RootCmd.AddCommand(runCmd)
 	RootCmd.AddCommand(connectCmd)
 }

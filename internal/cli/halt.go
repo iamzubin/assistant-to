@@ -10,17 +10,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var haltCmd = &cobra.Command{
-	Use:   "halt",
-	Short: "Immediately kill all active assistant-to agent tmux sessions",
-	Long:  `Searches for and forcefully terminates all running agent tmux sessions associated with the current project's workspace.`,
+var stopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop all agent sessions",
+	Long:  `Immediately kills all active assistant-to agent tmux sessions.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runHalt()
 	},
 }
 
 func init() {
-	RootCmd.AddCommand(haltCmd)
+	RootCmd.AddCommand(stopCmd)
 }
 
 func runHalt() error {

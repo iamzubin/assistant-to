@@ -134,7 +134,7 @@ func NewDashModel(database *db.DB, projectRoot string) tea.Model {
 		taskList:       tList,
 		agentList:      aList,
 		feedList:       fList,
-		activePane:     0,
+		activePane:     1, // Default to agents pane (agent mode)
 		showTasksPane:  true,
 		showAgentsPane: true,
 		feedSortDesc:   true,
@@ -277,7 +277,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "n":
 			if os.Getenv("TMUX") != "" {
 				// Use tmux popup for task addition
-				cmd := exec.Command("tmux", "display-popup", "-E", "-w", "80%", "-h", "80%", "at task add")
+				cmd := exec.Command("tmux", "display-popup", "-E", "-w", "80%", "-h", "80%", "dwight task add")
 				return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 					return tickMsg(time.Now())
 				})

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"assistant-to/internal/api"
 	"assistant-to/internal/config"
 	"assistant-to/internal/db"
 	"assistant-to/internal/merge"
@@ -21,13 +23,17 @@ import (
 // Coordinator manages the agent swarm by reading tasks from the DB
 // and spawning Builder agents in isolated tmux sessions.
 type Coordinator struct {
-	DB      *db.DB
-	Config  *config.Config
-	PWD     string // Project root directory
-	Prompts *PromptBook
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	tier2   *Tier2Watchdog
+	DB              *db.DB
+	Config          *config.Config
+	PWD             string // Project root directory
+	Prompts         *PromptBook
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	tier2           *Tier2Watchdog
+	apiServer       *api.Server
+	mcpServer       *api.MCPServer
+	RunIndefinitely bool // If true, keep running even when no tasks are found
+	mergerSpawned   bool // Track if merger has been spawned this session
 }
 
 // NewCoordinator creates a Coordinator, loading config and prompts from the project root.
@@ -72,11 +78,32 @@ func NewCoordinator(pwd string) (*Coordinator, error) {
 // 1. Fetch all pending tasks.
 // 2. For each task, create a worktree + tmux session for a Builder agent.
 // 3. Start a Watchdog goroutine to monitor each Builder.
+// 4. Start API and MCP servers for agent communication.
 func (c *Coordinator) Run(ctx context.Context) error {
 	// Create a cancellable context for graceful shutdown
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	defer cancel()
+
+	// Start API server if enabled
+	if c.Config.API.Enabled {
+		c.apiServer = api.NewServer(c.PWD, c.Config, c.DB)
+		if err := c.apiServer.Start(ctx); err != nil {
+			log.Printf("Warning: failed to start API server: %v", err)
+		} else {
+			log.Printf("API server started at http://%s:%d", c.Config.API.Host, c.Config.API.Port)
+		}
+	}
+
+	// Start MCP server if enabled
+	if c.Config.API.MCPEnabled {
+		c.mcpServer = api.NewMCPServer(c.Config.API.MCPPort, c.PWD, c.Config, c.DB)
+		if err := c.mcpServer.Start(ctx); err != nil {
+			log.Printf("Warning: failed to start MCP server: %v", err)
+		} else {
+			log.Printf("MCP server started at 127.0.0.1:%d", c.Config.API.MCPPort)
+		}
+	}
 
 	log.Println("Coordinator: fetching pending tasks...")
 	tasks, err := c.DB.ListTasksByStatus("pending")
@@ -85,7 +112,13 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	}
 
 	if len(tasks) == 0 {
-		fmt.Println("No pending tasks found. Add tasks with `at task add`, then run `at start` again.")
+		if c.RunIndefinitely {
+			fmt.Println("No pending tasks found. Waiting for tasks... (Press Ctrl+C to stop)")
+			// Keep servers running and wait for context cancellation
+			<-ctx.Done()
+			return nil
+		}
+		fmt.Println("No pending tasks found. Add tasks with `dwight task add`, then run `dwight up` again.")
 		return nil
 	}
 
@@ -154,7 +187,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		c.spawnBuilderAndWatchdogWithSemaphore(ctx, task, semaphore)
 	}
 
-	fmt.Println("All builders spawned. Run `at dash` to monitor progress.")
+	fmt.Println("All builders spawned. Run `dwight dash` to monitor progress.")
 
 	// Start Tier 2 Monitor Agent (if enabled and there are active tasks)
 	if c.Config.Watchdog.Tier2Enabled && len(tasks) > 0 {
@@ -164,6 +197,13 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	} else {
 		config.Debug("Coordinator: Tier 2 Monitor Agent disabled or no tasks")
 	}
+
+	// Start merger watcher - spawns merger once when all tasks complete
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.watchForMerge(ctx)
+	}()
 
 	// Wait for context cancellation (shutdown signal)
 	<-ctx.Done()
@@ -198,10 +238,11 @@ func (c *Coordinator) spawnScout(ctx context.Context, task db.Task) error {
 	taskID := strconv.Itoa(task.ID)
 
 	// Ensure the worktree exists
-	worktreeDir := filepath.Join(c.PWD, ".assistant-to", "worktrees", taskID)
+	worktreesDir := c.Config.GetWorktreesDir(c.PWD)
+	worktreeDir := filepath.Join(worktreesDir, taskID)
 	if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
 		log.Printf("Coordinator: creating worktree for task %s...", taskID)
-		_, err = sandbox.CreateWorktree(c.PWD, taskID, "main")
+		_, err = sandbox.CreateWorktree(c.PWD, taskID, "main", worktreesDir)
 		if err != nil {
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
@@ -213,7 +254,19 @@ func (c *Coordinator) spawnScout(ctx context.Context, task db.Task) error {
 		rolePrompt = "You are a Scout agent. Explore the codebase and report findings."
 	}
 
+	// Get MCP configuration for Scout
+	mcpPort := c.Config.MCPPortForRole("Scout")
+	apiPort := c.Config.API.Port
+	mcpContent := c.Prompts.GetMCP("Scout")
+	if mcpContent != "" {
+		mcpContent = strings.ReplaceAll(mcpContent, "{{.MCPPort}}", fmt.Sprintf("%d", mcpPort))
+		mcpContent = strings.ReplaceAll(mcpContent, "{{.APIPort}}", fmt.Sprintf("%d", apiPort))
+		mcpContent = strings.ReplaceAll(mcpContent, "{{.TaskID}}", taskID)
+	}
+
 	scoutMission := fmt.Sprintf(`%s
+
+%s
 
 ---
 
@@ -227,16 +280,20 @@ func (c *Coordinator) spawnScout(ctx context.Context, task db.Task) error {
 **Target Files:**
 %s
 
+**Communication:**
+- API Server: http://127.0.0.1:%d
+- MCP Server: 127.0.0.1:%d
+
 **Instructions:**
 1. Explore the target files and their dependencies
 2. Use grep, find, and other tools to understand the codebase structure
 3. Identify related files, patterns, and conventions
-4. Report your findings via: at mail send --to coordinator --subject "Scout Report: Task %s"
+4. Report your findings via mail to Coordinator
 5. Include: file paths, key functions/types, dependencies, and any relevant patterns
 6. Mark completion by creating: touch .scout_complete
 
 **Environment:** You are in READ-ONLY mode. Do NOT modify any files.
-`, rolePrompt, task.ID, task.Title, task.Description, task.TargetFiles, taskID)
+`, rolePrompt, mcpContent, task.ID, task.Title, task.Description, task.TargetFiles, apiPort, mcpPort)
 
 	// Write mission file
 	missionPath := filepath.Join(worktreeDir, ".scout_mission.md")
@@ -244,11 +301,13 @@ func (c *Coordinator) spawnScout(ctx context.Context, task db.Task) error {
 		return fmt.Errorf("failed to write scout mission file: %w", err)
 	}
 
-	model := c.Config.ModelForRole("Scout")
-	tool := c.Config.Tool
-	if tool == "" {
-		tool = "gemini"
+	// Generate MCP config files in the worktree
+	if err := c.generateWorktreeMCPConfigs(worktreeDir, "Scout", taskID); err != nil {
+		log.Printf("Warning: failed to generate MCP configs for scout task %s: %v", taskID, err)
 	}
+
+	model := c.Config.ModelForRole("Scout")
+	tool := c.Config.RuntimeForRole("Scout")
 
 	var agentCmd string
 	switch tool {
@@ -297,10 +356,11 @@ func (c *Coordinator) spawnBuilder(ctx context.Context, task db.Task) error {
 	taskID := strconv.Itoa(task.ID)
 
 	// Ensure the worktree exists
-	worktreeDir := filepath.Join(c.PWD, ".assistant-to", "worktrees", taskID)
+	worktreesDir := c.Config.GetWorktreesDir(c.PWD)
+	worktreeDir := filepath.Join(worktreesDir, taskID)
 	if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
 		log.Printf("Coordinator: creating worktree for task %s...", taskID)
-		_, err = sandbox.CreateWorktree(c.PWD, taskID, "main")
+		_, err = sandbox.CreateWorktree(c.PWD, taskID, "main", worktreesDir)
 		if err != nil {
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
@@ -308,8 +368,22 @@ func (c *Coordinator) spawnBuilder(ctx context.Context, task db.Task) error {
 
 	// Build the initial prompt for the Builder
 	rolePrompt := c.Prompts.Get("Builder")
-	taskPrompt := fmt.Sprintf("%s\n\n---\n\n## Your Task (ID: %d)\n\n**Title:** %s\n\n**Description:**\n%s\n\n**Target Files:**\n%s",
-		rolePrompt, task.ID, task.Title, task.Description, task.TargetFiles)
+	allowedTools := c.Config.AllowedToolsForRole("Builder")
+	apiPort := c.Config.API.Port
+	mcpPort := c.Config.MCPPortForRole("Builder")
+	toolDocs := c.generateToolDocs("Builder", allowedTools, apiPort, mcpPort)
+
+	// Get MCP configuration for this role
+	mcpContent := c.Prompts.GetMCP("Builder")
+	if mcpContent != "" {
+		// Replace template variables in MCP content
+		mcpContent = strings.ReplaceAll(mcpContent, "{{.MCPPort}}", fmt.Sprintf("%d", mcpPort))
+		mcpContent = strings.ReplaceAll(mcpContent, "{{.APIPort}}", fmt.Sprintf("%d", apiPort))
+		mcpContent = strings.ReplaceAll(mcpContent, "{{.TaskID}}", taskID)
+	}
+
+	taskPrompt := fmt.Sprintf("%s\n\n---\n\n## Your Task (ID: %d)\n\n**Title:** %s\n\n**Description:**\n%s\n\n**Target Files:**\n%s\n\n**Communication:**\n- API Server: http://127.0.0.1:%d\n- MCP Server: 127.0.0.1:%d\n%s\n\n%s",
+		rolePrompt, task.ID, task.Title, task.Description, task.TargetFiles, apiPort, mcpPort, toolDocs, mcpContent)
 
 	// Write prompt to a mission file in the worktree to avoid shell escaping issues
 	missionPath := filepath.Join(worktreeDir, ".mission.md")
@@ -317,20 +391,30 @@ func (c *Coordinator) spawnBuilder(ctx context.Context, task db.Task) error {
 		return fmt.Errorf("failed to write mission file: %w", err)
 	}
 
-	model := c.Config.ModelForRole("Builder")
-	tool := c.Config.Tool
-	if tool == "" {
-		tool = "gemini"
+	// Generate MCP config files in the worktree for the AI tool
+	if err := c.generateWorktreeMCPConfigs(worktreeDir, "Builder", taskID); err != nil {
+		log.Printf("Warning: failed to generate MCP configs for task %s: %v", taskID, err)
 	}
 
+	model := c.Config.ModelForRole("Builder")
+	tool := c.Config.RuntimeForRole("Builder")
+
+	// Build command that:
+	// 1. Changes to worktree directory (so opencode can find .opencode.json)
+	// 2. Runs the AI tool with the mission
 	var agentCmd string
 	switch tool {
 	case "gemini":
-		agentCmd = fmt.Sprintf("%s --model %s --yolo -p \"$(cat .mission.md)\"", tool, model)
+		// Gemini CLI doesn't support MCP, use REST API only
+		agentCmd = fmt.Sprintf("cd %s && %s --model %s --yolo -p \"$(cat .mission.md)\"",
+			worktreeDir, tool, model)
 	case "opencode":
-		agentCmd = fmt.Sprintf("%s --model %s --prompt \"$(cat .mission.md)\"", tool, model)
+		// Opencode automatically reads .opencode.json for MCP config
+		agentCmd = fmt.Sprintf("cd %s && %s --model %s --prompt \"$(cat .mission.md)\"",
+			worktreeDir, tool, model)
 	default:
-		agentCmd = fmt.Sprintf("%s --model %s --prompt \"$(cat .mission.md)\"", tool, model)
+		agentCmd = fmt.Sprintf("cd %s && %s --model %s --prompt \"$(cat .mission.md)\"",
+			worktreeDir, tool, model)
 	}
 
 	sessionName := sandbox.ProjectPrefix(c.PWD) + taskID
@@ -366,7 +450,7 @@ func (c *Coordinator) handleTaskCompletion(ctx context.Context, task db.Task) er
 		return fmt.Errorf("failed to update task status to merging: %w", err)
 	}
 
-	worktreeDir := filepath.Join(c.PWD, ".assistant-to", "worktrees", taskID)
+	worktreeDir := filepath.Join(c.Config.GetWorktreesDir(c.PWD), taskID)
 
 	// Attempt 4-tier merge resolution
 	resolver := merge.NewResolver(worktreeDir, "main")
@@ -397,7 +481,8 @@ func (c *Coordinator) handleTaskCompletion(ctx context.Context, task db.Task) er
 		// Clean up worktree after successful merge
 		go func() {
 			time.Sleep(5 * time.Minute) // Give some time before cleanup
-			if err := sandbox.TeardownWorktree(taskID, c.PWD); err != nil {
+			worktreesDir := c.Config.GetWorktreesDir(c.PWD)
+			if err := sandbox.TeardownWorktree(taskID, c.PWD, worktreesDir); err != nil {
 				log.Printf("Coordinator: Failed to teardown worktree for task %s: %v", taskID, err)
 			}
 		}()
@@ -407,8 +492,11 @@ func (c *Coordinator) handleTaskCompletion(ctx context.Context, task db.Task) er
 
 	// Resolution failed, check if we need Tier 4 (AI-assisted)
 	if result.Tier == merge.Tier4AIAssisted && !result.Success {
-		log.Printf("Coordinator: Tier 4 resolution needed for task %s", taskID)
-		return c.triggerAIAssistedMerge(ctx, task, result.Conflicts)
+		if c.Config.Merge.AIResolveEnabled {
+			log.Printf("Coordinator: Tier 4 resolution needed for task %s", taskID)
+			return c.triggerAIAssistedMerge(ctx, task, result.Conflicts)
+		}
+		log.Printf("Coordinator: Tier 4 resolution needed but AIResolveEnabled is false for task %s", taskID)
 	}
 
 	// All tiers failed
@@ -431,7 +519,7 @@ func (c *Coordinator) triggerAIAssistedMerge(ctx context.Context, task db.Task, 
 	taskID := strconv.Itoa(task.ID)
 	log.Printf("Coordinator: Spawning Merger agent for task %s", taskID)
 
-	worktreeDir := filepath.Join(c.PWD, ".assistant-to", "worktrees", taskID)
+	worktreeDir := filepath.Join(c.Config.GetWorktreesDir(c.PWD), taskID)
 
 	aiResolver := merge.NewAIAssistedResolution(c.DB, c.PWD, worktreeDir, "main", taskID)
 	result, err := aiResolver.AttemptResolution(ctx)
@@ -492,7 +580,7 @@ func (c *Coordinator) checkBuilderCompletion(agentID string) bool {
 	}
 
 	// Check if builder session is still active
-	worktreeDir := filepath.Join(c.PWD, ".assistant-to", "worktrees", taskIDStr)
+	worktreeDir := filepath.Join(c.Config.GetWorktreesDir(c.PWD), taskIDStr)
 
 	// Check for completion indicator file
 	completionFile := filepath.Join(worktreeDir, ".builder_complete")
@@ -512,16 +600,154 @@ func (c *Coordinator) checkBuilderCompletion(agentID string) bool {
 	return false
 }
 
-// shouldSpawnScout determines if a task should have a Scout agent
+// watchForMerge periodically checks if all tasks are complete and spawns Merger once
+func (c *Coordinator) watchForMerge(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Skip if merger already spawned
+			if c.mergerSpawned {
+				return
+			}
+
+			// Get all non-complete tasks
+			tasks, err := c.DB.ListTasksByStatus("")
+			if err != nil {
+				log.Printf("Coordinator: Failed to list tasks for merge check: %v", err)
+				continue
+			}
+
+			// Check if there are any pending/building/review tasks
+			hasIncomplete := false
+			hasCompleted := false
+			for _, task := range tasks {
+				if task.Status == db.TaskStatusPending ||
+					task.Status == db.TaskStatusStarted ||
+					task.Status == db.TaskStatusBuilding ||
+					task.Status == db.TaskStatusReview {
+					hasIncomplete = true
+					break
+				}
+				if task.Status == db.TaskStatusComplete {
+					hasCompleted = true
+				}
+			}
+
+			// If no incomplete tasks but some completed, spawn merger
+			if !hasIncomplete && hasCompleted && !c.mergerSpawned {
+				log.Printf("Coordinator: All tasks complete, spawning Merger")
+				if err := c.spawnMerger(ctx); err != nil {
+					log.Printf("Coordinator: Failed to spawn Merger: %v", err)
+				} else {
+					c.mergerSpawned = true
+					return // Stop watching after spawning
+				}
+			}
+		}
+	}
+}
+
+// spawnMerger spawns a Merger agent in the project root to merge all worktrees
+func (c *Coordinator) spawnMerger(ctx context.Context) error {
+	log.Printf("Coordinator: Spawning Merger agent in project root")
+
+	// Load config and prompts
+	configPath := filepath.Join(c.PWD, ".assistant-to", "config.yaml")
+	conf, err := config.Load(configPath)
+	if err != nil {
+		conf = config.Default()
+	}
+
+	tool := conf.RuntimeForRole("merger")
+	model := conf.ModelForRole("merger")
+
+	// Load prompt
+	promptsPath := filepath.Join(c.PWD, ".assistant-to", "prompts")
+	if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
+		promptsPath = filepath.Join(c.PWD, "internal", "orchestrator", "prompts")
+	}
+	prompts, err := LoadPrompts(promptsPath)
+	if err != nil {
+		return fmt.Errorf("failed to load prompts: %w", err)
+	}
+
+	rolePrompt := prompts.Get("Merger")
+	if rolePrompt == "" {
+		rolePrompt = "You are the Merger agent. Merge completed task branches into main."
+	}
+
+	// Get list of completed tasks
+	tasks, _ := c.DB.ListTasksByStatus("complete")
+	var taskList string
+	for _, task := range tasks {
+		taskList += fmt.Sprintf("- Task %d: %s (branch: at-%d)\n", task.ID, task.Title, task.ID)
+	}
+
+	mission := fmt.Sprintf(`%s
+
+## Merge Mission
+
+Merge these completed task branches into main:
+%s
+
+Commands:
+- dwight worktree merge <task-id>  # Merge a task
+- dwight mail send --to coordinator --subject "Merged" --body "All tasks merged"
+- go build ./... && go test ./...   # Verify after merge
+`, rolePrompt, taskList)
+
+	// Write mission file in project root
+	missionPath := filepath.Join(c.PWD, ".merger_mission.md")
+	if err := os.WriteFile(missionPath, []byte(mission), 0644); err != nil {
+		return fmt.Errorf("failed to write merger mission: %w", err)
+	}
+
+	// Generate MCP config for merger
+	if err := c.generateWorktreeMCPConfigs(c.PWD, "merger", "merger"); err != nil {
+		log.Printf("Warning: failed to generate MCP configs for merger: %v", err)
+	}
+
+	// Build command - runs in project root
+	var agentCmd string
+	switch tool {
+	case "gemini":
+		agentCmd = fmt.Sprintf("AT_AGENT_ROLE=merger %s --model %s --yolo -p \"$(cat .merger_mission.md)\"", tool, model)
+	case "opencode":
+		agentCmd = fmt.Sprintf("AT_AGENT_ROLE=merger %s --model %s --prompt \"$(cat .merger_mission.md)\"", tool, model)
+	default:
+		agentCmd = fmt.Sprintf("AT_AGENT_ROLE=merger %s --model %s --prompt \"$(cat .merger_mission.md)\"", tool, model)
+	}
+
+	sessionName := sandbox.ProjectPrefix(c.PWD) + "merger"
+	session := sandbox.TmuxSession{
+		SessionName: sessionName,
+		WorktreeDir: c.PWD, // Project root, not worktree
+		Command:     agentCmd,
+	}
+
+	if err := session.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start merger session: %w", err)
+	}
+
+	log.Printf("Coordinator: Merger agent started in session %s", sessionName)
+	return nil
+}
+
+// shouldSpawnScout determines if a task needs exploration before building
+// Simple tasks: single file, <50 lines, clear instructions
+// Complex tasks: multiple files, refactoring, needs exploration
 func (c *Coordinator) shouldSpawnScout(task db.Task) bool {
-	// Check if Scout is enabled in config
 	if !c.Config.IsScoutEnabled() {
 		return false
 	}
 
-	// Scout is useful for complex tasks or when target files span multiple packages
-	// Check if task description mentions exploration keywords
-	complexKeywords := []string{"explore", "find", "understand", "investigate", "analyze", "complex", "refactor", "module"}
+	// Check if task description suggests complexity
+	complexKeywords := []string{"explore", "find", "understand", "investigate", "refactor", "multiple", "complex"}
 	descLower := strings.ToLower(task.Description)
 	for _, keyword := range complexKeywords {
 		if strings.Contains(descLower, keyword) {
@@ -529,7 +755,7 @@ func (c *Coordinator) shouldSpawnScout(task db.Task) bool {
 		}
 	}
 
-	// Check if target files span multiple directories
+	// Check if spanning multiple packages/directories
 	if task.TargetFiles != "" {
 		files := strings.Split(task.TargetFiles, ",")
 		dirs := make(map[string]bool)
@@ -539,7 +765,7 @@ func (c *Coordinator) shouldSpawnScout(task db.Task) bool {
 				dirs[dir] = true
 			}
 		}
-		// If spanning 3+ different directories, use Scout
+		// 3+ directories = complex
 		if len(dirs) >= 3 {
 			return true
 		}
@@ -551,7 +777,7 @@ func (c *Coordinator) shouldSpawnScout(task db.Task) bool {
 // waitForScoutAndSpawnBuilder waits for Scout to complete then spawns Builder
 func (c *Coordinator) waitForScoutAndSpawnBuilder(ctx context.Context, task db.Task) {
 	taskID := strconv.Itoa(task.ID)
-	worktreeDir := filepath.Join(c.PWD, ".assistant-to", "worktrees", taskID)
+	worktreeDir := filepath.Join(c.Config.GetWorktreesDir(c.PWD), taskID)
 	scoutCompleteFile := filepath.Join(worktreeDir, ".scout_complete")
 
 	// Wait for Scout completion with configurable timeout
@@ -640,4 +866,190 @@ func (c *Coordinator) spawnBuilderAndWatchdogWithSemaphore(ctx context.Context, 
 		watchdog := NewWatchdog(c.DB, c.PWD, c.Config)
 		watchdog.MonitorHeartbeats(ctx, "builder-"+taskID)
 	}(taskID, semaphore)
+}
+
+// generateToolDocs generates documentation for the allowed tools based on config
+func (c *Coordinator) generateToolDocs(role string, allowedTools []string, apiPort, mcpPort int) string {
+	var docs string
+
+	has := func(tool string) bool {
+		for _, t := range allowedTools {
+			if t == tool {
+				return true
+			}
+		}
+		return false
+	}
+
+	docs += "\n\n## Available Tools (REST API)\n\n"
+	docs += "You can call these tools via REST API at `http://127.0.0.1:" + fmt.Sprintf("%d", apiPort) + "`:\n\n"
+
+	if has("mail") {
+		docs += "### Mail\n"
+		docs += "- `GET /api/mail/list?recipient=<agent>` - List mail messages\n"
+		docs += "- `POST /api/mail/send` - Send mail (to, subject, body, type)\n"
+		docs += "- `GET /api/mail/check?recipient=<agent>` - Check and retrieve unread mail\n\n"
+	}
+
+	if has("log") {
+		docs += "### Logging\n"
+		docs += "- `POST /api/log` - Log event (type, details)\n\n"
+	}
+
+	if has("task") {
+		docs += "### Task Management\n"
+		docs += "- `GET /api/task/list?status=<status>` - List tasks\n"
+		docs += "- `POST /api/task/update` - Update task status (task_id, status)\n\n"
+	}
+
+	if has("buffer") {
+		docs += "### Buffer/Debug\n"
+		docs += "- `GET /api/buffer?agent_id=<id>&lines=<n>` - Capture tmux buffer\n\n"
+	}
+
+	if has("session") {
+		docs += "### Session Management\n"
+		docs += "- `GET /api/session/list` - List active sessions\n"
+		docs += "- `POST /api/session/kill` - Kill session (agent_id)\n"
+		docs += "- `POST /api/session/send` - Send input (agent_id, input)\n"
+		docs += "- `POST /api/session/clear` - Clear buffer (agent_id)\n\n"
+	}
+
+	if has("cleanup") {
+		docs += "### Cleanup\n"
+		docs += "- `POST /api/cleanup` - Cleanup task (task_id)\n\n"
+	}
+
+	if has("worktree") {
+		docs += "### Worktree\n"
+		docs += "- `POST /api/worktree/merge` - Merge worktree (task_id, base_branch)\n"
+		docs += "- `POST /api/worktree/teardown` - Teardown worktree (task_id)\n\n"
+	}
+
+	if has("spawn") {
+		docs += "### Spawn Agents\n"
+		docs += "- Spawn new agents via CLI: `dwight run <task-id> --role <role>`\n\n"
+	}
+
+	if has("dash") {
+		docs += "### Dashboard\n"
+		docs += "- `dwight dash` - Open live dashboard\n\n"
+	}
+
+	docs += "## MCP Tools\n\n"
+	docs += fmt.Sprintf("You can also connect to MCP server at `127.0.0.1:%d` for structured tool calls.\n", mcpPort)
+	docs += "Available MCP tools: " + strings.Join(allowedTools, ", ")
+
+	return docs
+}
+
+// generateWorktreeMCPConfigs creates MCP configuration files in the worktree for AI tools
+func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID string) error {
+	mcpPort := c.Config.MCPPortForRole(role)
+
+	// Generate opencode.json (correct format per https://opencode.ai/docs/mcp-servers)
+	opencodeConfig := map[string]interface{}{
+		"$schema": "https://opencode.ai/config.json",
+		"mcp": map[string]interface{}{
+			"assistant-to": map[string]interface{}{
+				"type":    "local",
+				"command": []string{"dwight", "mcp", "serve"},
+				"enabled": true,
+				"environment": map[string]string{
+					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+					"AT_AGENT_ROLE":   role,
+					"AT_TASK_ID":      taskID,
+					"AT_PROJECT_ROOT": c.PWD,
+				},
+			},
+		},
+	}
+
+	opencodePath := filepath.Join(worktreeDir, "opencode.json")
+	opencodeData, err := json.MarshalIndent(opencodeConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal opencode config: %w", err)
+	}
+	if err := os.WriteFile(opencodePath, opencodeData, 0644); err != nil {
+		return fmt.Errorf("failed to write opencode config: %w", err)
+	}
+
+	// Generate Gemini settings.json (correct format per https://geminicli.com/docs/tools/mcp-server/)
+	geminiConfig := map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"assistant-to": map[string]interface{}{
+				"command": "dwight",
+				"args":    []string{"mcp", "serve"},
+				"env": map[string]string{
+					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+					"AT_AGENT_ROLE":   role,
+					"AT_TASK_ID":      taskID,
+					"AT_PROJECT_ROOT": c.PWD,
+				},
+			},
+		},
+	}
+
+	geminiPath := filepath.Join(worktreeDir, ".gemini", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(geminiPath), 0755); err != nil {
+		return fmt.Errorf("failed to create .gemini directory: %w", err)
+	}
+	geminiData, err := json.MarshalIndent(geminiConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal gemini config: %w", err)
+	}
+	if err := os.WriteFile(geminiPath, geminiData, 0644); err != nil {
+		return fmt.Errorf("failed to write gemini config: %w", err)
+	}
+
+	// Generate Claude Desktop config (claude_desktop_config.json)
+	claudeConfig := map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"assistant-to": map[string]interface{}{
+				"command": "dwight",
+				"args":    []string{"mcp", "serve"},
+				"env": map[string]string{
+					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+					"AT_AGENT_ROLE":   role,
+					"AT_TASK_ID":      taskID,
+					"AT_PROJECT_ROOT": c.PWD,
+				},
+			},
+		},
+	}
+
+	claudePath := filepath.Join(worktreeDir, "claude_desktop_config.json")
+	claudeData, err := json.MarshalIndent(claudeConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal claude config: %w", err)
+	}
+	if err := os.WriteFile(claudePath, claudeData, 0644); err != nil {
+		return fmt.Errorf("failed to write claude config: %w", err)
+	}
+
+	// Generate generic mcp.json
+	mcpConfig := map[string]interface{}{
+		"name":        "assistant-to",
+		"description": fmt.Sprintf("Assistant-to %s agent MCP server", role),
+		"transport":   "stdio",
+		"command":     "dwight",
+		"args":        []string{"mcp", "serve"},
+		"env": map[string]string{
+			"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+			"AT_AGENT_ROLE":   role,
+			"AT_TASK_ID":      taskID,
+			"AT_PROJECT_ROOT": c.PWD,
+		},
+	}
+
+	mcpPath := filepath.Join(worktreeDir, "mcp.json")
+	mcpData, err := json.MarshalIndent(mcpConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal mcp config: %w", err)
+	}
+	if err := os.WriteFile(mcpPath, mcpData, 0644); err != nil {
+		return fmt.Errorf("failed to write mcp config: %w", err)
+	}
+
+	return nil
 }

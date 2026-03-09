@@ -51,7 +51,7 @@ func TestGitWorktreeLifecycle(t *testing.T) {
 	baseBranch := "main"
 
 	// 1. Create Worktree
-	worktreeDir, err := CreateWorktree(repoDir, taskID, baseBranch)
+	worktreeDir, err := CreateWorktree(repoDir, taskID, baseBranch, "")
 	if err != nil {
 		t.Fatalf("CreateWorktree failed: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestGitWorktreeLifecycle(t *testing.T) {
 	}
 
 	// 4. Teardown Worktree
-	if err := TeardownWorktree(taskID, repoDir); err != nil {
+	if err := TeardownWorktree(taskID, repoDir, ""); err != nil {
 		t.Fatalf("TeardownWorktree failed: %v", err)
 	}
 
@@ -113,7 +113,7 @@ func TestTeardownAllWorktrees(t *testing.T) {
 
 	var worktreeDirs []string
 	for _, id := range taskIDs {
-		dir, err := CreateWorktree(repoDir, id, baseBranch)
+		dir, err := CreateWorktree(repoDir, id, baseBranch, "")
 		if err != nil {
 			t.Fatalf("CreateWorktree failed for %s: %v", id, err)
 		}
@@ -121,7 +121,7 @@ func TestTeardownAllWorktrees(t *testing.T) {
 	}
 
 	// Teardown all
-	if err := TeardownAllWorktrees(repoDir); err != nil {
+	if err := TeardownAllWorktrees(repoDir, ""); err != nil {
 		t.Fatalf("TeardownAllWorktrees failed: %v", err)
 	}
 
