@@ -756,6 +756,12 @@ func (c *Coordinator) spawnMerger(ctx context.Context) error {
 	}
 
 	tasks, _ := c.DB.ListTasksByStatus("complete")
+
+	baseBranch := c.Config.Project.CanonicalBranch
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+
 	var taskList string
 	for _, task := range tasks {
 		taskList += fmt.Sprintf("- Task %d: %s (branch: at-%d)\n", task.ID, task.Title, task.ID)
@@ -765,14 +771,16 @@ func (c *Coordinator) spawnMerger(ctx context.Context) error {
 
 ## Merge Mission
 
-Merge these completed task branches into main:
+**Base Branch:** %s
+
+Merge these completed task branches into %s:
 %s
 
 Commands:
-- dwight worktree merge <task-id>  # Merge a task
+- dwight worktree merge <task-id>  # Merge a task (uses base branch: %s)
 - dwight mail send --to coordinator --subject "Merged" --body "All tasks merged"
 - go build ./... && go test ./...   # Verify after merge
-`, rolePrompt, taskList)
+`, rolePrompt, baseBranch, baseBranch, taskList, baseBranch)
 
 	missionPath := filepath.Join(mainBranchPath, ".merger_mission.md")
 	if err := os.WriteFile(missionPath, []byte(mission), 0644); err != nil {
@@ -819,6 +827,7 @@ Commands:
 			"AT_AGENT_ROLE":                   "merger",
 			"AT_MCP_PORT":                     fmt.Sprintf("%d", mcpPort),
 			"AT_PROJECT_ROOT":                 mainBranchPath,
+			"AT_BASE_BRANCH":                  baseBranch,
 			"GEMINI_CLI_SYSTEM_SETTINGS_PATH": filepath.Join(mainBranchPath, ".gemini", "settings.json"),
 		},
 	}
