@@ -78,7 +78,7 @@ var impactCmd = &cobra.Command{
 
 		// Check if index exists
 		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-			fmt.Println("Code index not found. Run 'at intelligence index' first.")
+			fmt.Println("Code index not found. Run 'dwight intelligence index' first.")
 			os.Exit(1)
 		}
 
@@ -131,7 +131,7 @@ var depsCmd = &cobra.Command{
 
 		// Check if index exists
 		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-			fmt.Println("Code index not found. Run 'at intelligence index' first.")
+			fmt.Println("Code index not found. Run 'dwight intelligence index' first.")
 			os.Exit(1)
 		}
 

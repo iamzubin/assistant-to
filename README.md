@@ -16,14 +16,14 @@ Before installing, ensure you have the following available:
 To install `assistant-to` globally:
 
 ```bash
-go install ./cmd/at
+go install ./cmd/dwight
 ```
 
-Make sure your `$GOPATH/bin` is in your `PATH`. You can then use the `at` command from any directory.
+Make sure your `$GOPATH/bin` is in your `PATH`. You can then use the `dwight` command from any directory.
 
 Alternatively, to build locally:
 ```bash
-go build -o at ./cmd/at
+go build -o dwight ./cmd/dwight
 ```
 
 ## 🚀 Quick Start
@@ -32,25 +32,25 @@ go build -o at ./cmd/at
 Run this in the root of the git repository you want to manage.
 
 ```bash
-at init
+dwight init
 ```
 This will create a `.assistant-to` directory with your configuration and state database.
 
 ### 2. Add a task
 ```bash
-at task add
+dwight task add
 ```
 Follow the interactive form to define the task.
 
 ### 3. Start the swarm
 ```bash
-at start
+dwight start
 ```
 This wakes up the Coordinator to begin processing the task queue.
 
 ### 4. Monitor progress
 ```bash
-at dash
+dwight dash
 ```
 Opens the TUI dashboard to see your agents in action.
 
@@ -59,13 +59,13 @@ Opens the TUI dashboard to see your agents in action.
 ## 🛠 Development
 
 ### Project Structure
-- `cmd/at/`: Entry point for the CLI.
+- `cmd/dwight/`: Entry point for the CLI.
 - `internal/`: Core logic, including orchestrator, prompts, and database management.
 - `SPEC.md`: Detailed architectural specification.
 
 ### Building
 ```bash
-go build -o at ./cmd/at
+go build -o dwight ./cmd/dwight
 ```
 
 ### Testing
@@ -77,11 +77,11 @@ go test ./...
 
 ## 📖 CLI Commands
 
-- `at init` - Interactive setup (via `huh`).
-- `at task add` - Interactive form to queue new work.
-- `at start` - Starts the Coordinator.
-- `at dash` - Opens the live TUI dashboard.
-- `at halt` - Instantly kills all `assistant-to-*` tmux sessions.
+- `dwight init` - Interactive setup (via `huh`).
+- `dwight task add` - Interactive form to queue new work.
+- `dwight start` - Starts the Coordinator.
+- `dwight dash` - Opens the live TUI dashboard.
+- `dwight halt` - Instantly kills all `assistant-to-*` tmux sessions.
 
 ---
 

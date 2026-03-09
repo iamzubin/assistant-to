@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // ProjectPrefix generates a unique, readable prefix for tmux sessions based on the project path.
@@ -97,7 +98,7 @@ func (t *TmuxSession) setupReadOnlyGuards() {
 	warning := "\n╔════════════════════════════════════════════════════════════╗\n" +
 		"║  READ-ONLY MODE ENABLED                                    ║\n" +
 		"║  This agent is in exploration mode. File writes are        ║\n" +
-		"║  discouraged. Use 'at mail' to report findings.            ║\n" +
+		"║  discouraged. Use 'dwight mail' to report findings.            ║\n" +
 		"╚════════════════════════════════════════════════════════════╝\n"
 	t.SendKeys(warning)
 }
@@ -219,4 +220,27 @@ func (t *TmuxSession) CaptureBufferLines(lineCount int) (string, error) {
 	}
 
 	return string(output), nil
+}
+
+// ClearBuffer clears the tmux pane by sending clear command
+func (t *TmuxSession) ClearBuffer() error {
+	cmd := exec.Command("tmux", "send-keys", "-t", t.SessionName, "C-l")
+	return cmd.Run()
+}
+
+// ListSessions returns all tmux sessions matching the given prefix
+func ListSessions(prefix string) ([]string, error) {
+	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, err
+	}
+
+	var sessions []string
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			sessions = append(sessions, strings.TrimPrefix(line, prefix))
+		}
+	}
+	return sessions, nil
 }

@@ -44,6 +44,24 @@ func LoadPrompts(path string) (*PromptBook, error) {
 				prompts[role] = strings.TrimSpace(string(data))
 			}
 		}
+
+		// Load MCP files from mcp subdirectory
+		mcpPath := filepath.Join(path, "mcp")
+		if _, err := os.Stat(mcpPath); err == nil {
+			mcpEntries, err := os.ReadDir(mcpPath)
+			if err == nil {
+				for _, entry := range mcpEntries {
+					if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+						role := strings.TrimSuffix(entry.Name(), ".md")
+						data, err := os.ReadFile(filepath.Join(mcpPath, entry.Name()))
+						if err == nil {
+							prompts["mcp/"+role] = strings.TrimSpace(string(data))
+						}
+					}
+				}
+			}
+		}
+
 		return &PromptBook{prompts: prompts}, nil
 	}
 
@@ -91,4 +109,41 @@ func (pb *PromptBook) Roles() []string {
 		roles = append(roles, r)
 	}
 	return roles
+}
+
+// GetMCP retrieves the MCP configuration content for a given role.
+// It looks in the "mcp" subdirectory of the prompts path.
+func (pb *PromptBook) GetMCP(role string) string {
+	return pb.prompts["mcp/"+strings.ToLower(role)]
+}
+
+// LoadMCPs loads MCP configuration files from the mcp subdirectory.
+func (pb *PromptBook) LoadMCPs(mcpPath string) error {
+	info, err := os.Stat(mcpPath)
+	if err != nil {
+		// MCP directory might not exist, that's ok
+		return nil
+	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("mcp path is not a directory: %s", mcpPath)
+	}
+
+	entries, err := os.ReadDir(mcpPath)
+	if err != nil {
+		return fmt.Errorf("failed to read mcp directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+			role := strings.TrimSuffix(entry.Name(), ".md")
+			data, err := os.ReadFile(filepath.Join(mcpPath, entry.Name()))
+			if err != nil {
+				return fmt.Errorf("failed to read mcp file %s: %w", entry.Name(), err)
+			}
+			pb.prompts["mcp/"+role] = strings.TrimSpace(string(data))
+		}
+	}
+
+	return nil
 }

@@ -28,7 +28,7 @@ var recordCmd = &cobra.Command{
 - Failures: Known pitfalls and mistakes to avoid  
 - Decisions: Architectural decisions and their rationale
 
-This knowledge is automatically loaded by 'at prime' before agents start work.`,
+This knowledge is automatically loaded by 'dwight prime' before agents start work.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		pwd, err := findProjectRoot()
 		if err != nil {

@@ -1,5 +1,5 @@
-#compdef at
-compdef _at at
+#compdef dwight
+compdef _dwight dwight
 
 # zsh completion for at                                   -*- shell-script -*-
 
@@ -11,7 +11,7 @@ __at_debug()
     fi
 }
 
-_at()
+_dwight()
 {
     local shellCompDirectiveError=1
     local shellCompDirectiveNoSpace=2
@@ -207,11 +207,11 @@ _at()
 }
 
 # don't run the completion function when being source-ed or eval-ed
-if [ "$funcstack[1]" = "_at" ]; then
-    _at
+if [ "$funcstack[1]" = "_dwight" ]; then
+    _dwight
 fi
-#compdef at
-compdef _at at
+#compdef dwight
+compdef _dwight dwight
 
 # zsh completion for at                                   -*- shell-script -*-
 
@@ -223,7 +223,7 @@ __at_debug()
     fi
 }
 
-_at()
+_dwight()
 {
     local shellCompDirectiveError=1
     local shellCompDirectiveNoSpace=2
@@ -419,6 +419,6 @@ _at()
 }
 
 # don't run the completion function when being source-ed or eval-ed
-if [ "$funcstack[1]" = "_at" ]; then
-    _at
+if [ "$funcstack[1]" = "_dwight" ]; then
+    _dwight
 fi

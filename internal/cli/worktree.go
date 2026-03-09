@@ -33,7 +33,7 @@ var createWorktreeCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		fmt.Printf("Creating worktree for task %s based on %s...\n", taskID, baseBranch)
-		dir, err := sandbox.CreateWorktree(pwd, taskID, baseBranch)
+		dir, err := sandbox.CreateWorktree(pwd, taskID, baseBranch, "")
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
@@ -90,7 +90,7 @@ var teardownWorktreeCmd = &cobra.Command{
 
 		if teardownAll {
 			fmt.Println("Tearing down all worktrees...")
-			err := sandbox.TeardownAllWorktrees(pwd)
+			err := sandbox.TeardownAllWorktrees(pwd, "")
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
@@ -101,7 +101,7 @@ var teardownWorktreeCmd = &cobra.Command{
 
 		taskID := args[0]
 		fmt.Printf("Tearing down worktree for task %s...\n", taskID)
-		err = sandbox.TeardownWorktree(taskID, pwd)
+		err = sandbox.TeardownWorktree(taskID, pwd, "")
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)

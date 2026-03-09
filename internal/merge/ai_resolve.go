@@ -165,7 +165,7 @@ func (a *AIAssistedResolution) createResolutionWorktree() (string, error) {
 	resolutionID := fmt.Sprintf("merger-%s-%d", a.TaskID, time.Now().Unix())
 	worktreeDir := filepath.Join(a.PWD, ".assistant-to", "worktrees", resolutionID)
 
-	_, err := sandbox.CreateWorktree(a.PWD, resolutionID, a.BaseBranch)
+	_, err := sandbox.CreateWorktree(a.PWD, resolutionID, a.BaseBranch, "")
 	if err != nil {
 		return "", fmt.Errorf("failed to create worktree: %w", err)
 	}

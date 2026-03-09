@@ -100,7 +100,7 @@ func outputJSON(expertise []db.Expertise) {
 
 func outputText(expertise []db.Expertise) {
 	if len(expertise) == 0 {
-		fmt.Println("No expertise records found. Use 'at record' to add knowledge.")
+		fmt.Println("No expertise records found. Use 'dwight record' to add knowledge.")
 		return
 	}
 
