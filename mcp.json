@@ -1,0 +1,16 @@
+{
+  "args": [
+    "mcp",
+    "serve"
+  ],
+  "command": "/Users/iamzubin/projects/assistant-to/dwight",
+  "description": "Assistant-to Coordinator agent MCP server",
+  "env": {
+    "AT_AGENT_ROLE": "Coordinator",
+    "AT_MCP_PORT": "18265",
+    "AT_PROJECT_ROOT": "/Users/iamzubin/projects/assistant-to",
+    "AT_TASK_ID": "coordinator"
+  },
+  "name": "assistant-to",
+  "transport": "stdio"
+}

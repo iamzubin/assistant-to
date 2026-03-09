@@ -16,11 +16,11 @@ const (
 
 // Expertise represents a learned piece of project knowledge
 type Expertise struct {
-	ID          int
-	Domain      string
-	Type        string
-	Description string
-	Timestamp   time.Time
+	ID          int       `json:"id"`
+	Domain      string    `json:"domain"`
+	Type        string    `json:"type"`
+	Description string    `json:"description"`
+	Timestamp   time.Time `json:"timestamp"`
 }
 
 // RecordExpertise adds a new learning to the expertise table

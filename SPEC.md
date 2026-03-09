@@ -15,14 +15,12 @@ The system state is persisted in `.assistant-to/state.db`:
 - **Tasks**: Lifecycle management (Pending -> Scouting -> Building -> Merging -> Complete).
 - **Mailbox**: A typed message queue for agent-to-agent and agent-to-system communication.
 - **Events**: Audit log of all system and agent actions.
+- **Expertise**: A shared knowledge base where agents record and search for project-specific conventions, patterns, and decisions.
 
 ### 3.2 The Coordinator
-The `Coordinator` is the central engine of the system. It:
-1. Polls the database for new tasks.
-2. Initializes Git worktrees for task isolation.
-3. Spawns appropriate agents (Scout, Builder) in tmux sessions.
-4. Starts the API and MCP servers for agent communication.
-5. Monitors agent completion and initiates the merge process.
+The system utilizes a dual-coordinator model:
+1. **Passive Infrastructure (Go)**: A long-running process that provides the API/MCP servers, manages worktrees, and handles tmux session lifecycle. It does NOT make autonomous decisions.
+2. **AI Coordinator (Gemini)**: An autonomous AI agent that manages the swarm via MCP tools. It queries tasks, spawns sub-agents, intercepts mail for quality control, and intervenes when agents are stuck.
 
 ### 3.3 Agent Roster
 - **Scout**: Read-only agent that explores the codebase, identifies dependencies, and reports findings.
@@ -33,8 +31,15 @@ The `Coordinator` is the central engine of the system. It:
 ### 3.4 Communication Protocol
 Agents interact with the system via:
 - **Mailbox API**: Agents send/receive "Mail" objects (Dispatch, Status, Question, Result, Error).
-- **MCP (Model Context Protocol)**: Provides a standardized interface for agents to use local tools (shell, git, file system).
-- **REST API**: Internal server providing status updates and configuration.
+- **MCP (Model Context Protocol)**: Provides a standardized interface for agents to use local tools (shell, git, file system). The system automatically generates project-specific MCP configurations for tools like `gemini` CLI and `opencode`.
+- **REST API**: Internal server providing status updates and configuration. Ports are deterministically calculated based on the project path to prevent conflicts between multiple instances.
+
+### 3.5 Code Intelligence (Mulch)
+`assistant-to` includes a dedicated code intelligence engine called "Mulch":
+- **Static Analysis**: Parses Go source code using `go/parser` to build a symbol index.
+- **Dependency Graph**: Maps relationships between files, packages, and types (structs, interfaces).
+- **Impact Analysis**: Helps agents understand the ripple effects of proposed changes by tracing function calls and type usages.
+- **Persistence**: Symbols and dependencies are stored in a SQLite database for fast querying.
 
 ## 4. Execution Sandbox
 - **Git Worktrees**: Prevents concurrent tasks from interfering with each other's file system state.

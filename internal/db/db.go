@@ -52,7 +52,9 @@ func (d *DB) InitSchema() error {
 		description TEXT NOT NULL,
 		target_files TEXT,
 		status TEXT DEFAULT 'pending',
-		priority INTEGER DEFAULT 3
+		priority INTEGER DEFAULT 3,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS events (

@@ -4,11 +4,15 @@ MCP server at 127.0.0.1:{{.MCPPort}} provides communication tools.
 
 ## Available Tools
 
-**Mail:** `mail_send` (to="Coordinator"), `mail_check`
+**Mail:**
+- `mail_send`: to="Coordinator", subject, body, type
+- `mail_check`: recipient="scout-{{.TaskID}}"
 
-**Debug:** `buffer_capture`
+**Knowledge:** `expertise_list`, `expertise_record`
 
-**Logging:** `log_event`
+**Debug:** `buffer_capture` (agent_id="scout-{{.TaskID}}")
+
+**Logging:** `log_event` (agent_id="scout-{{.TaskID}}", type, details)
 
 ## Usage
 - Send findings via `mail_send` with specific file paths

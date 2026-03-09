@@ -575,6 +575,12 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 	// Get project root (parent of .assistant-to)
 	projectRoot := filepath.Dir(baseDir)
 
+	// Use absolute path for the command to ensure it works from any directory
+	absDwightPath, err := filepath.Abs(filepath.Join(projectRoot, "dwight"))
+	if err != nil {
+		absDwightPath = "dwight" // Fallback
+	}
+
 	// Generate coordinator MCP configs in PROJECT ROOT (not .assistant-to)
 	// Use env vars - the server will set these when starting
 	// This allows dynamic port assignment per project instance
@@ -585,12 +591,12 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 		"mcp": map[string]interface{}{
 			"assistant-to": map[string]interface{}{
 				"type":    "local",
-				"command": []string{"dwight", "mcp", "serve"},
+				"command": []string{absDwightPath, "mcp", "serve"},
 				"enabled": true,
 				"environment": map[string]string{
-					"AT_MCP_PORT":     "${AT_MCP_PORT}",
+					"AT_MCP_PORT":     fmt.Sprintf("%d", cfg.API.MCPPort),
 					"AT_AGENT_ROLE":   "coordinator",
-					"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
+					"AT_PROJECT_ROOT": projectRoot,
 				},
 			},
 		},
@@ -609,13 +615,14 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 	geminiConfig := map[string]interface{}{
 		"mcpServers": map[string]interface{}{
 			"assistant-to": map[string]interface{}{
-				"command": "dwight",
+				"command": absDwightPath,
 				"args":    []string{"mcp", "serve"},
 				"env": map[string]string{
-					"AT_MCP_PORT":     "${AT_MCP_PORT}",
+					"AT_MCP_PORT":     fmt.Sprintf("%d", cfg.API.MCPPort),
 					"AT_AGENT_ROLE":   "coordinator",
-					"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
+					"AT_PROJECT_ROOT": projectRoot,
 				},
+				"trust": true,
 			},
 		},
 	}
@@ -633,41 +640,17 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 		return fmt.Errorf("failed to write coordinator gemini config: %w", err)
 	}
 
-	// 2. claude_desktop_config.json for Claude Desktop
-	claudeConfig := map[string]interface{}{
-		"mcpServers": map[string]interface{}{
-			"assistant-to": map[string]interface{}{
-				"command": "dwight",
-				"args":    []string{"mcp", "serve"},
-				"env": map[string]string{
-					"AT_MCP_PORT":     "${AT_MCP_PORT}",
-					"AT_AGENT_ROLE":   "coordinator",
-					"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
-				},
-			},
-		},
-	}
-
-	claudePath := filepath.Join(projectRoot, "claude_desktop_config.json")
-	claudeData, err := json.MarshalIndent(claudeConfig, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal coordinator claude config: %w", err)
-	}
-	if err := os.WriteFile(claudePath, claudeData, 0644); err != nil {
-		return fmt.Errorf("failed to write coordinator claude config: %w", err)
-	}
-
 	// 3. mcp.json generic config
 	mcpConfig := map[string]interface{}{
 		"name":        "assistant-to",
 		"description": "Assistant-to Coordinator MCP server",
 		"transport":   "stdio",
-		"command":     "dwight",
+		"command":     absDwightPath,
 		"args":        []string{"mcp", "serve"},
 		"env": map[string]string{
-			"AT_MCP_PORT":     "${AT_MCP_PORT}",
+			"AT_MCP_PORT":     fmt.Sprintf("%d", cfg.API.MCPPort),
 			"AT_AGENT_ROLE":   "coordinator",
-			"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
+			"AT_PROJECT_ROOT": projectRoot,
 		},
 	}
 
@@ -706,7 +689,6 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 		"The following files have been created in your PROJECT ROOT:\n" +
 		"- **opencode.json**: Opencode MCP config for the Coordinator\n" +
 		"- **.gemini/settings.json**: Gemini CLI MCP config\n" +
-		"- **claude_desktop_config.json**: Claude Desktop MCP config\n" +
 		"- **mcp.json**: Generic MCP config\n\n" +
 		"## Usage\n\n" +
 		"### Opencode\n\n" +
@@ -715,18 +697,11 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 		"### Gemini CLI\n\n" +
 		"The .gemini/settings.json in your project root configures Gemini CLI to connect to the assistant-to MCP server.\n" +
 		"Gemini CLI automatically reads this file when run from the project directory.\n\n" +
-		"### Claude Desktop\n\n" +
-		"Copy claude_desktop_config.json to your Claude Desktop config:\n\n" +
-		"```bash\n" +
-		"# macOS\n" +
-		"cp claude_desktop_config.json ~/Library/Application\\ Support/Claude/claude_desktop_config.json\n" +
-		"# Windows\n" +
-		"copy claude_desktop_config.json \"%AppData%\\Claude\\claude_desktop_config.json\"\n" +
-		"```\n\n" +
 		"## Agent Roles\n\n" +
 		"- **Coordinator** (project root): Full access - runs `dwight up`\n" +
 		"- **Builder/Scout/Reviewer/Merger** (worktrees): Limited access - spawned by coordinator\n\n" +
 		"Each worktree gets its own MCP config when an agent is spawned.\n"
+
 
 	readmePath := filepath.Join(mcpDir, "README.md")
 	if err := os.WriteFile(readmePath, []byte(readmeContent), 0644); err != nil {

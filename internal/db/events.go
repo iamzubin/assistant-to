@@ -8,11 +8,11 @@ import (
 
 // Event represents an audit log entry or heartbeat from an agent
 type Event struct {
-	ID        int
-	AgentID   string
-	EventType string
-	Details   string
-	Timestamp time.Time
+	ID        int       `json:"id"`
+	AgentID   string    `json:"agent_id"`
+	EventType string    `json:"event_type"`
+	Details   string    `json:"details"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // RecordEvent logs an action, tool call, or heartbeat from an agent
@@ -41,6 +41,24 @@ func (d *DB) GetAgentHistory(agentID string) ([]Event, error) {
 		err := rows.Scan(&e.ID, &e.AgentID, &e.EventType, &e.Details, &e.Timestamp)
 		return e, err
 	}, agentID)
+}
+
+// GetAllEvents retrieves the most recent events across all agents
+func (d *DB) GetAllEvents(limit int) ([]Event, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	query := `
+		SELECT id, agent_id, event_type, details, timestamp
+		FROM events
+		ORDER BY timestamp DESC
+		LIMIT ?
+	`
+	return queryList(d, query, func(rows *sql.Rows) (Event, error) {
+		var e Event
+		err := rows.Scan(&e.ID, &e.AgentID, &e.EventType, &e.Details, &e.Timestamp)
+		return e, err
+	}, limit)
 }
 
 // GetLastHeartbeat retrieves the timestamp of the last event for an agent

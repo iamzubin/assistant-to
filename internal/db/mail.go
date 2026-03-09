@@ -29,15 +29,15 @@ const (
 
 // Mail represents a message sent between agents or the system
 type Mail struct {
-	ID        int
-	Sender    string
-	Recipient string
-	Subject   string
-	Body      string
-	Type      string
-	Priority  int
-	IsRead    bool
-	Timestamp time.Time
+	ID        int       `json:"id"`
+	Sender    string    `json:"sender"`
+	Recipient string    `json:"recipient"`
+	Subject   string    `json:"subject"`
+	Body      string    `json:"body"`
+	Type      string    `json:"type"`
+	Priority  int       `json:"priority"`
+	IsRead    bool      `json:"is_read"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // SendMail inserts a new message into the mail table with type and priority

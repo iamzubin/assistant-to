@@ -134,15 +134,38 @@ var runCmd = &cobra.Command{
 			fmt.Printf("Warning: failed to write mission file: %v\n", err)
 		}
 
+		exePath, err := os.Executable()
+		if err != nil {
+			exePath = "dwight" // Fallback
+		}
+		if absPath, err := filepath.Abs(exePath); err == nil {
+			exePath = absPath
+		}
+
+		geminiPath, err := exec.LookPath("gemini")
+		if err != nil {
+			geminiPath = "gemini" // Fallback
+		}
+
+		opencodePath, err := exec.LookPath("opencode")
+		if err != nil {
+			opencodePath = "opencode" // Fallback
+		}
+
 		var agentCmd string
 		switch tool {
 		case "gemini":
-			agentCmd = fmt.Sprintf("AT_MCP_PORT=%d AT_PROJECT_ROOT=%s AT_AGENT_ROLE=%s %s --model %s --yolo -p \"$(cat .mission.md)\"", mcpPort, pwd, role, tool, model)
+			// -i (prompt-interactive) takes the prompt as its argument.
+			// --approval-mode=yolo allows tools to run without manual confirmation.
+			// We use $(cat ...) inside the shell to avoid passing huge strings through tmux send-keys
+			agentCmd = fmt.Sprintf("%s --model %s --approval-mode=yolo -i \"$(cat .mission.md)\"", geminiPath, model)
 		case "opencode":
-			agentCmd = fmt.Sprintf("AT_MCP_PORT=%d AT_PROJECT_ROOT=%s AT_AGENT_ROLE=%s %s --model %s --prompt \"$(cat .mission.md)\"", mcpPort, pwd, role, tool, model)
+			// opencode [project] --prompt [prompt]
+			// We run it in the current directory (.) and pass the mission as prompt
+			agentCmd = fmt.Sprintf("%s . --model %s --prompt \"$(cat .mission.md)\"", opencodePath, model)
 		default:
 			// Generic fallback
-			agentCmd = fmt.Sprintf("AT_MCP_PORT=%d AT_PROJECT_ROOT=%s AT_AGENT_ROLE=%s %s --model %s --prompt \"$(cat .mission.md)\"", mcpPort, pwd, role, tool, model)
+			agentCmd = fmt.Sprintf("%s --model %s --prompt \"$(cat .mission.md)\"", tool, model)
 		}
 
 		// Update mission status if it's a numeric task ID
@@ -159,6 +182,13 @@ var runCmd = &cobra.Command{
 			SessionName: sessionName,
 			WorktreeDir: worktreeDir,
 			Command:     agentCmd,
+			EnvVars: map[string]string{
+				"AT_MCP_PORT":                     fmt.Sprintf("%d", mcpPort),
+				"AT_PROJECT_ROOT":                 pwd,
+				"AT_AGENT_ROLE":                   role,
+				"AT_TASK_ID":                      taskID,
+				"GEMINI_CLI_SYSTEM_SETTINGS_PATH": filepath.Join(worktreeDir, ".gemini", "settings.json"),
+			},
 		}
 
 		fmt.Printf("Spawning tmux session: %s\n", sessionName)

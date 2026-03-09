@@ -4,13 +4,17 @@ MCP server at 127.0.0.1:{{.MCPPort}} provides merge tools.
 
 ## Available Tools
 
-**Mail:** `mail_send`, `mail_check`
+**Mail:**
+- `mail_send`: to="Coordinator", subject, body, type
+- `mail_check`: recipient="merger"
 
 **Worktrees:** `worktree_merge` (task_id), `worktree_teardown` (task_id)
 
-**Debug:** `buffer_capture`
+**Knowledge:** `expertise_list`, `expertise_record`
 
-**Logging:** `log_event`
+**Debug:** `buffer_capture` (agent_id="merger")
+
+**Logging:** `log_event` (agent_id="merger", type, details)
 
 ## Usage
 - Merge with `worktree_merge`

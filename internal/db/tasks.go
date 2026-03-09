@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // Task status constants
@@ -40,12 +41,14 @@ const (
 
 // Task represents an autonomous work item
 type Task struct {
-	ID          int
-	Title       string
-	Description string
-	TargetFiles string
-	Status      string
-	Priority    int
+	ID          int       `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	TargetFiles string    `json:"target_files"`
+	Status      string    `json:"status"`
+	Priority    int       `json:"priority"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // IsValidTaskStatus checks if a status value is valid
@@ -89,7 +92,7 @@ func (d *DB) UpdateTaskStatus(taskID int, status string) error {
 
 	query := `
 		UPDATE tasks
-		SET status = ?
+		SET status = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`
 	res, err := d.Exec(query, status, taskID)
@@ -137,13 +140,13 @@ func (d *DB) ListTasksByStatus(status string) ([]Task, error) {
 
 	if status == "" {
 		query = `
-			SELECT id, title, description, target_files, status, priority
+			SELECT id, title, description, target_files, status, priority, created_at, updated_at
 			FROM tasks
 			ORDER BY priority ASC, id ASC
 		`
 	} else {
 		query = `
-			SELECT id, title, description, target_files, status, priority
+			SELECT id, title, description, target_files, status, priority, created_at, updated_at
 			FROM tasks
 			WHERE status = ?
 			ORDER BY priority ASC, id ASC
@@ -154,7 +157,7 @@ func (d *DB) ListTasksByStatus(status string) ([]Task, error) {
 	return queryList(d, query, func(rows *sql.Rows) (Task, error) {
 		var t Task
 		var targetFiles sql.NullString
-		err := rows.Scan(&t.ID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority)
+		err := rows.Scan(&t.ID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
 		if targetFiles.Valid {
 			t.TargetFiles = targetFiles.String
 		}
@@ -165,7 +168,7 @@ func (d *DB) ListTasksByStatus(status string) ([]Task, error) {
 // ListTasksByPriority retrieves all tasks matching a specific priority level
 func (d *DB) ListTasksByPriority(priority int) ([]Task, error) {
 	query := `
-		SELECT id, title, description, target_files, status, priority
+		SELECT id, title, description, target_files, status, priority, created_at, updated_at
 		FROM tasks
 		WHERE priority = ?
 		ORDER BY id ASC
@@ -173,7 +176,7 @@ func (d *DB) ListTasksByPriority(priority int) ([]Task, error) {
 	return queryList(d, query, func(rows *sql.Rows) (Task, error) {
 		var t Task
 		var targetFiles sql.NullString
-		err := rows.Scan(&t.ID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority)
+		err := rows.Scan(&t.ID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
 		if targetFiles.Valid {
 			t.TargetFiles = targetFiles.String
 		}
@@ -202,13 +205,13 @@ func (d *DB) RemoveTask(taskID int) error {
 // GetTaskByID retrieves a single task by its ID.
 func (d *DB) GetTaskByID(taskID int) (*Task, error) {
 	query := `
-		SELECT id, title, description, target_files, status, priority
+		SELECT id, title, description, target_files, status, priority, created_at, updated_at
 		FROM tasks
 		WHERE id = ?
 	`
 	var t Task
 	var targetFiles sql.NullString
-	err := d.QueryRow(query, taskID).Scan(&t.ID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority)
+	err := d.QueryRow(query, taskID).Scan(&t.ID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("task not found: %d", taskID)

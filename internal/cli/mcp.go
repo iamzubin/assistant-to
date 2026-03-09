@@ -102,8 +102,10 @@ func runStdioServer(server *api.MCPServer) {
 		}
 
 		resp := server.ProcessRequest(req)
-		respJSON, _ := json.Marshal(resp)
-		fmt.Println(string(respJSON))
+		if resp != nil {
+			respJSON, _ := json.Marshal(resp)
+			fmt.Println(string(respJSON))
+		}
 	}
 }
 

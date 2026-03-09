@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -94,8 +97,26 @@ func (s *MCPServer) initTools() {
 		{
 			Name:        "log_event",
 			Description: "Log an event to the coordinator's event log",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"type":{"type":"string"},"details":{"type":"string"}},"required":["details"]}`),
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"agent_id":{"type":"string"},"type":{"type":"string"},"details":{"type":"string"}},"required":["details"]}`),
 			Handler:     s.handleLog,
+		},
+		{
+			Name:        "event_list",
+			Description: "List recent swarm events",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"agent_id":{"type":"string"},"limit":{"type":"integer"}}}`),
+			Handler:     s.handleEventList,
+		},
+		{
+			Name:        "expertise_list",
+			Description: "Search or list shared project knowledge/expertise",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"domain":{"type":"string"},"query":{"type":"string"}}}`),
+			Handler:     s.handleExpertiseList,
+		},
+		{
+			Name:        "expertise_record",
+			Description: "Record a new piece of project knowledge/expertise",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"domain":{"type":"string"},"type":{"type":"string","enum":["convention","pattern","failure","decision"]},"description":{"type":"string"}},"required":["domain","type","description"]}`),
+			Handler:     s.handleExpertiseRecord,
 		},
 		{
 			Name:        "task_list",
@@ -157,6 +178,12 @@ func (s *MCPServer) initTools() {
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"task_id":{"type":"string"}},"required":["task_id"]}`),
 			Handler:     s.handleWorktreeTeardown,
 		},
+		{
+			Name:        "agent_spawn",
+			Description: "Spawn a new agent for a task (role: Builder, Scout, Reviewer, Merger)",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"task_id":{"type":"string"},"role":{"type":"string"}},"required":["task_id","role"]}`),
+			Handler:     s.handleAgentSpawn,
+		},
 	}
 }
 
@@ -203,14 +230,19 @@ func (s *MCPServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := s.ProcessRequest(req)
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("Error encoding MCP response: %v", err)
+	if resp != nil {
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			log.Printf("Error encoding MCP response: %v", err)
+		}
 	}
 }
 
 // ProcessRequest handles an MCP request and returns a response
 // This can be used for both HTTP and stdio communication
-func (s *MCPServer) ProcessRequest(req MCPRequest) MCPResponse {
+func (s *MCPServer) ProcessRequest(req MCPRequest) *MCPResponse {
+	// Log incoming request to stderr for debugging (won't interfere with stdio JSON-RPC)
+	fmt.Fprintf(os.Stderr, "[MCP] Processing method: %s (ID: %v)\n", req.Method, req.ID)
+
 	var resp MCPResponse
 	resp.JSONRPC = "2.0"
 	resp.ID = req.ID
@@ -271,11 +303,20 @@ func (s *MCPServer) ProcessRequest(req MCPRequest) MCPResponse {
 				"tools": map[string]interface{}{},
 			},
 		}
+	case "notifications/initialized":
+		// No-op for initialized notification
+		fmt.Fprintf(os.Stderr, "[MCP] Received initialized notification\n")
+		return nil
 	default:
+		// If it's a notification (ID is nil), don't return an error response
+		if req.ID == nil {
+			fmt.Fprintf(os.Stderr, "[MCP] Ignoring unknown notification: %s\n", req.Method)
+			return nil
+		}
 		resp.Error = &MCPError{Code: -32601, Message: "Method not found"}
 	}
 
-	return resp
+	return &resp
 }
 
 // Tool handlers
@@ -349,15 +390,67 @@ func (s *MCPServer) handleMailCheck(params json.RawMessage) (interface{}, error)
 
 func (s *MCPServer) handleLog(params json.RawMessage) (interface{}, error) {
 	var p struct {
+		AgentID string `json:"agent_id"`
 		Type    string `json:"type"`
 		Details string `json:"details"`
 	}
 	json.Unmarshal(params, &p)
+	if p.AgentID == "" {
+		p.AgentID = "unknown"
+	}
 	if p.Type == "" {
 		p.Type = "info"
 	}
-	s.db.RecordEvent("agent", p.Type, p.Details)
+	s.db.RecordEvent(p.AgentID, p.Type, p.Details)
 	return "logged", nil
+}
+
+func (s *MCPServer) handleEventList(params json.RawMessage) (interface{}, error) {
+	var p struct {
+		AgentID string `json:"agent_id"`
+		Limit   int    `json:"limit"`
+	}
+	json.Unmarshal(params, &p)
+
+	if p.AgentID != "" {
+		return s.db.GetAgentHistory(p.AgentID)
+	}
+	return s.db.GetAllEvents(p.Limit)
+}
+
+func (s *MCPServer) handleExpertiseList(params json.RawMessage) (interface{}, error) {
+	var p struct {
+		Domain string `json:"domain"`
+		Query  string `json:"query"`
+	}
+	json.Unmarshal(params, &p)
+
+	if p.Query != "" {
+		return s.db.SearchExpertise(p.Query)
+	}
+	if p.Domain != "" {
+		return s.db.GetExpertiseByDomain(p.Domain)
+	}
+	return s.db.GetAllExpertise()
+}
+
+func (s *MCPServer) handleExpertiseRecord(params json.RawMessage) (interface{}, error) {
+	var p struct {
+		Domain      string `json:"domain"`
+		Type        string `json:"type"`
+		Description string `json:"description"`
+	}
+	json.Unmarshal(params, &p)
+
+	if p.Domain == "" || p.Type == "" || p.Description == "" {
+		return nil, fmt.Errorf("domain, type, and description are required")
+	}
+
+	id, err := s.db.RecordExpertise(p.Domain, p.Type, p.Description)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"id": id, "status": "recorded"}, nil
 }
 
 func (s *MCPServer) handleTaskList(params json.RawMessage) (interface{}, error) {
@@ -477,4 +570,34 @@ func (s *MCPServer) handleWorktreeTeardown(params json.RawMessage) (interface{},
 	}
 	json.Unmarshal(params, &p)
 	return nil, sandbox.TeardownWorktree(p.TaskID, s.pwd, "")
+}
+
+func (s *MCPServer) handleAgentSpawn(params json.RawMessage) (interface{}, error) {
+	var p struct {
+		TaskID string `json:"task_id"`
+		Role   string `json:"role"`
+	}
+	json.Unmarshal(params, &p)
+
+	// Get absolute path to the dwight executable
+	exePath, err := os.Executable()
+	if err != nil {
+		exePath = "dwight" // Fallback
+	}
+	if absPath, err := filepath.Abs(exePath); err == nil {
+		exePath = absPath
+	}
+
+	// Use exec.Command to run 'dwight run' which handles all the worktree and session setup
+	// We run it as a detached process or just wait for it to return after it spawns the tmux session
+	cmd := exec.Command(exePath, "run", p.TaskID, "--role", p.Role)
+	cmd.Dir = s.pwd // Run from project root
+
+	// Capture output for debugging
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to spawn agent: %v (output: %s)", err, output)
+	}
+
+	return string(output), nil
 }

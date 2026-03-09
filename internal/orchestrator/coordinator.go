@@ -66,10 +66,15 @@ func NewCoordinator(pwd string) (*Coordinator, error) {
 		return nil, fmt.Errorf("failed to load agent prompts from %s: %w", promptsPath, err)
 	}
 
+	absPWD, err := filepath.Abs(pwd)
+	if err != nil {
+		absPWD = pwd
+	}
+
 	return &Coordinator{
 		DB:      database,
 		Config:  conf,
-		PWD:     pwd,
+		PWD:     absPWD,
 		Prompts: prompts,
 	}, nil
 }
@@ -133,50 +138,21 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	return c.runOnce(ctx)
 }
 
-// runLoop runs the coordinator in an infinite loop, checking for tasks periodically
+// runLoop runs the coordinator in a passive mode, keeping servers alive.
+// The AI Coordinator agent is expected to manage task lifecycles via MCP tools.
 func (c *Coordinator) runLoop(ctx context.Context) error {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	fmt.Println("Coordinator: Running in indefinite mode. Waiting for tasks...")
+	fmt.Println("Coordinator: Running in passive infrastructure mode. AI agent should manage tasks.")
 	fmt.Println("Press Ctrl+C to stop.")
 
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Println("Coordinator: Shutting down...")
-			return nil
-		case <-ticker.C:
-			tasks, err := c.DB.ListTasksByStatus("pending")
-			if err != nil {
-				log.Printf("Error listing tasks: %v", err)
-				continue
-			}
-
-			if len(tasks) > 0 {
-				log.Printf("Found %d pending task(s). Processing...", len(tasks))
-				if err := c.processTasks(ctx, tasks); err != nil {
-					log.Printf("Error processing tasks: %v", err)
-				}
-			}
-		}
-	}
+	// Just block until the context is cancelled
+	<-ctx.Done()
+	fmt.Println("Coordinator: Shutting down...")
+	return nil
 }
 
-// runOnce processes tasks once and exits
+// runOnce is now the same as runLoop in passive mode
 func (c *Coordinator) runOnce(ctx context.Context) error {
-	log.Println("Coordinator: fetching pending tasks...")
-	tasks, err := c.DB.ListTasksByStatus("pending")
-	if err != nil {
-		return fmt.Errorf("failed to list pending tasks: %w", err)
-	}
-
-	if len(tasks) == 0 {
-		fmt.Println("No pending tasks found. Add tasks with `dwight task add`, then run `dwight up` again.")
-		return nil
-	}
-
-	return c.processTasks(ctx, tasks)
+	return c.runLoop(ctx)
 }
 
 // processTasks handles the actual task spawning logic
@@ -368,14 +344,24 @@ func (c *Coordinator) spawnScout(ctx context.Context, task db.Task) error {
 	model := c.Config.ModelForRole("Scout")
 	tool := c.Config.RuntimeForRole("Scout")
 
+	geminiPath, err := exec.LookPath("gemini")
+	if err != nil {
+		geminiPath = "gemini" // Fallback
+	}
+
+	opencodePath, err := exec.LookPath("opencode")
+	if err != nil {
+		opencodePath = "opencode" // Fallback
+	}
+
 	var agentCmd string
 	switch tool {
 	case "gemini":
-		agentCmd = fmt.Sprintf(`READ_ONLY_MODE=1 %s --model %s --yolo -p "$(cat .scout_mission.md)"`, tool, model)
+		agentCmd = fmt.Sprintf(`%s --model %s --approval-mode=yolo -i "$(cat .scout_mission.md)"`, geminiPath, model)
 	case "opencode":
-		agentCmd = fmt.Sprintf(`READ_ONLY_MODE=1 %s --model %s --prompt "$(cat .scout_mission.md)"`, tool, model)
+		agentCmd = fmt.Sprintf(`%s . --model %s --prompt "$(cat .scout_mission.md)"`, opencodePath, model)
 	default:
-		agentCmd = fmt.Sprintf(`READ_ONLY_MODE=1 %s --model %s --prompt "$(cat .scout_mission.md)"`, tool, model)
+		agentCmd = fmt.Sprintf(`%s --model %s --prompt "$(cat .scout_mission.md)"`, tool, model)
 	}
 
 	sessionName := sandbox.ProjectPrefix(c.PWD) + "scout-" + taskID
@@ -385,9 +371,13 @@ func (c *Coordinator) spawnScout(ctx context.Context, task db.Task) error {
 		Command:     agentCmd,
 		ReadOnly:    true,
 		EnvVars: map[string]string{
-			"AT_AGENT_ROLE": "Scout",
-			"AT_TASK_ID":    taskID,
-			"AT_READ_ONLY":  "1",
+			"AT_MCP_PORT":                     fmt.Sprintf("%d", mcpPort),
+			"AT_PROJECT_ROOT":                 c.PWD,
+			"AT_AGENT_ROLE":                   "Scout",
+			"AT_TASK_ID":                      taskID,
+			"AT_READ_ONLY":                    "1",
+			"READ_ONLY_MODE":                  "1",
+			"GEMINI_CLI_SYSTEM_SETTINGS_PATH": filepath.Join(worktreeDir, ".gemini", "settings.json"),
 		},
 	}
 
@@ -458,18 +448,25 @@ func (c *Coordinator) spawnBuilder(ctx context.Context, task db.Task) error {
 	model := c.Config.ModelForRole("Builder")
 	tool := c.Config.RuntimeForRole("Builder")
 
+	geminiPath, err := exec.LookPath("gemini")
+	if err != nil {
+		geminiPath = "gemini" // Fallback
+	}
+
+	opencodePath, err := exec.LookPath("opencode")
+	if err != nil {
+		opencodePath = "opencode" // Fallback
+	}
+
 	// Build command with env vars for MCP connection
 	var agentCmd string
 	switch tool {
 	case "gemini":
-		agentCmd = fmt.Sprintf("cd %s && AT_MCP_PORT=%d AT_PROJECT_ROOT=%s AT_AGENT_ROLE=Builder %s --model %s --yolo -p \"$(cat .mission.md)\"",
-			worktreeDir, mcpPort, c.PWD, tool, model)
+		agentCmd = fmt.Sprintf(`%s --model %s --approval-mode=yolo -i "$(cat .mission.md)"`, geminiPath, model)
 	case "opencode":
-		agentCmd = fmt.Sprintf("cd %s && AT_MCP_PORT=%d AT_PROJECT_ROOT=%s AT_AGENT_ROLE=Builder %s --model %s --prompt \"$(cat .mission.md)\"",
-			worktreeDir, mcpPort, c.PWD, tool, model)
+		agentCmd = fmt.Sprintf(`%s . --model %s --prompt "$(cat .mission.md)"`, opencodePath, model)
 	default:
-		agentCmd = fmt.Sprintf("cd %s && AT_MCP_PORT=%d AT_PROJECT_ROOT=%s AT_AGENT_ROLE=Builder %s --model %s --prompt \"$(cat .mission.md)\"",
-			worktreeDir, mcpPort, c.PWD, tool, model)
+		agentCmd = fmt.Sprintf(`%s --model %s --prompt "$(cat .mission.md)"`, tool, model)
 	}
 
 	sessionName := sandbox.ProjectPrefix(c.PWD) + taskID
@@ -477,6 +474,13 @@ func (c *Coordinator) spawnBuilder(ctx context.Context, task db.Task) error {
 		SessionName: sessionName,
 		WorktreeDir: worktreeDir,
 		Command:     agentCmd,
+		EnvVars: map[string]string{
+			"AT_MCP_PORT":                     fmt.Sprintf("%d", mcpPort),
+			"AT_PROJECT_ROOT":                 c.PWD,
+			"AT_AGENT_ROLE":                   "Builder",
+			"AT_TASK_ID":                      taskID,
+			"GEMINI_CLI_SYSTEM_SETTINGS_PATH": filepath.Join(worktreeDir, ".gemini", "settings.json"),
+		},
 	}
 
 	log.Printf("Coordinator: spawning Builder for task %s (model=%s, session=%s)...", taskID, model, sessionName)
@@ -767,15 +771,27 @@ Commands:
 		log.Printf("Warning: failed to generate MCP configs for merger: %v", err)
 	}
 
+	_, mcpPort := c.Config.GetProjectPorts(c.PWD)
+
+	geminiPath, err := exec.LookPath("gemini")
+	if err != nil {
+		geminiPath = "gemini" // Fallback
+	}
+
+	opencodePath, err := exec.LookPath("opencode")
+	if err != nil {
+		opencodePath = "opencode" // Fallback
+	}
+
 	// Build command - runs in project root
 	var agentCmd string
 	switch tool {
 	case "gemini":
-		agentCmd = fmt.Sprintf("AT_AGENT_ROLE=merger %s --model %s --yolo -p \"$(cat .merger_mission.md)\"", tool, model)
+		agentCmd = fmt.Sprintf(`%s --model %s --approval-mode=yolo -i "$(cat .merger_mission.md)"`, geminiPath, model)
 	case "opencode":
-		agentCmd = fmt.Sprintf("AT_AGENT_ROLE=merger %s --model %s --prompt \"$(cat .merger_mission.md)\"", tool, model)
+		agentCmd = fmt.Sprintf(`%s . --model %s --prompt "$(cat .merger_mission.md)"`, opencodePath, model)
 	default:
-		agentCmd = fmt.Sprintf("AT_AGENT_ROLE=merger %s --model %s --prompt \"$(cat .merger_mission.md)\"", tool, model)
+		agentCmd = fmt.Sprintf(`%s --model %s --prompt "$(cat .merger_mission.md)"`, tool, model)
 	}
 
 	sessionName := sandbox.ProjectPrefix(c.PWD) + "merger"
@@ -783,6 +799,12 @@ Commands:
 		SessionName: sessionName,
 		WorktreeDir: c.PWD, // Project root, not worktree
 		Command:     agentCmd,
+		EnvVars: map[string]string{
+			"AT_AGENT_ROLE":                   "merger",
+			"AT_MCP_PORT":                     fmt.Sprintf("%d", mcpPort),
+			"AT_PROJECT_ROOT":                 c.PWD,
+			"GEMINI_CLI_SYSTEM_SETTINGS_PATH": filepath.Join(c.PWD, ".gemini", "settings.json"),
+		},
 	}
 
 	if err := session.Start(ctx); err != nil {
@@ -983,7 +1005,8 @@ func (c *Coordinator) generateToolDocs(role string, allowedTools []string, apiPo
 
 	if has("spawn") {
 		docs += "### Spawn Agents\n"
-		docs += "- Spawn new agents via CLI: `dwight run <task-id> --role <role>`\n\n"
+		docs += "- Spawn new agents via CLI: `dwight run <task-id> --role <role>`\n"
+		docs += "- Spawn new agents via MCP: `agent_spawn(task_id, role)`\n\n"
 	}
 
 	if has("dash") {
@@ -1000,8 +1023,15 @@ func (c *Coordinator) generateToolDocs(role string, allowedTools []string, apiPo
 
 // generateWorktreeMCPConfigs creates MCP configuration files in the worktree for AI tools
 func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID string) error {
-	// Use env vars - the MCP server will read from these when started
-	// This allows dynamic port assignment per project instance
+	exePath, err := os.Executable()
+	if err != nil {
+		exePath = "dwight" // Fallback
+	}
+	if absPath, err := filepath.Abs(exePath); err == nil {
+		exePath = absPath
+	}
+
+	_, mcpPort := c.Config.GetProjectPorts(c.PWD)
 
 	// Generate opencode.json (correct format per https://opencode.ai/docs/mcp-servers)
 	opencodeConfig := map[string]interface{}{
@@ -1009,13 +1039,13 @@ func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID strin
 		"mcp": map[string]interface{}{
 			"assistant-to": map[string]interface{}{
 				"type":    "local",
-				"command": []string{"dwight", "mcp", "serve"},
+				"command": []string{exePath, "mcp", "serve"},
 				"enabled": true,
 				"environment": map[string]string{
-					"AT_MCP_PORT":     "${AT_MCP_PORT}",
+					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
 					"AT_AGENT_ROLE":   role,
 					"AT_TASK_ID":      taskID,
-					"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
+					"AT_PROJECT_ROOT": c.PWD,
 				},
 			},
 		},
@@ -1034,14 +1064,15 @@ func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID strin
 	geminiConfig := map[string]interface{}{
 		"mcpServers": map[string]interface{}{
 			"assistant-to": map[string]interface{}{
-				"command": "dwight",
+				"command": exePath,
 				"args":    []string{"mcp", "serve"},
 				"env": map[string]string{
-					"AT_MCP_PORT":     "${AT_MCP_PORT}",
+					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
 					"AT_AGENT_ROLE":   role,
 					"AT_TASK_ID":      taskID,
-					"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
+					"AT_PROJECT_ROOT": c.PWD,
 				},
+				"trust": true,
 			},
 		},
 	}
@@ -1058,43 +1089,18 @@ func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID strin
 		return fmt.Errorf("failed to write gemini config: %w", err)
 	}
 
-	// Generate Claude Desktop config (claude_desktop_config.json)
-	claudeConfig := map[string]interface{}{
-		"mcpServers": map[string]interface{}{
-			"assistant-to": map[string]interface{}{
-				"command": "dwight",
-				"args":    []string{"mcp", "serve"},
-				"env": map[string]string{
-					"AT_MCP_PORT":     "${AT_MCP_PORT}",
-					"AT_AGENT_ROLE":   role,
-					"AT_TASK_ID":      taskID,
-					"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
-				},
-			},
-		},
-	}
-
-	claudePath := filepath.Join(worktreeDir, "claude_desktop_config.json")
-	claudeData, err := json.MarshalIndent(claudeConfig, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal claude config: %w", err)
-	}
-	if err := os.WriteFile(claudePath, claudeData, 0644); err != nil {
-		return fmt.Errorf("failed to write claude config: %w", err)
-	}
-
 	// Generate generic mcp.json
 	mcpConfig := map[string]interface{}{
 		"name":        "assistant-to",
 		"description": fmt.Sprintf("Assistant-to %s agent MCP server", role),
 		"transport":   "stdio",
-		"command":     "dwight",
+		"command":     exePath,
 		"args":        []string{"mcp", "serve"},
 		"env": map[string]string{
-			"AT_MCP_PORT":     "${AT_MCP_PORT}",
+			"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
 			"AT_AGENT_ROLE":   role,
 			"AT_TASK_ID":      taskID,
-			"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
+			"AT_PROJECT_ROOT": c.PWD,
 		},
 	}
 

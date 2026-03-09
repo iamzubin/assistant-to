@@ -35,81 +35,58 @@ type TmuxSession struct {
 }
 
 // Start spawns a detached tmux session locked to the worktree directory.
-// The -d flag is critical to ensure the orchestrator doesn't get blocked
-// by the child agent's terminal.
+// It sets up the environment and executes the command directly in the new session.
 func (t *TmuxSession) Start(ctx context.Context) error {
-	// Construct the tmux new-session command
-	// -d: detach (run in background)
-	// -s: session name
-	// -c: start directory (the sandboxed worktree)
-	args := []string{"new-session", "-d", "-s", t.SessionName, "-c", t.WorktreeDir}
-
-	if t.Command != "" {
-		// If a command is given, we append the execute string.
-		// Note: A bare tmux command will close the session immediately after completion.
-		// To prevent tmux from instantly closing on abrupt panics or process crashes,
-		// we keep the pane open using a fallback loop.
-		fallbackCmd := fmt.Sprintf("%s || { echo '\n[Agent Crash/Exit] The agent process failed with a non-zero exit code. Tmux session kept open for debugging...'; sleep 86400; }", t.Command)
-		args = append(args, "bash", "-c", fallbackCmd)
-	}
-
-	cmd := exec.CommandContext(ctx, "tmux", args...)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to start tmux session %q: %v (output: %s)", t.SessionName, err, output)
-	}
-
-	// Set environment variables if provided
+	// 1. Prepare environment arguments
+	// Note: tmux -e requires tmux 3.0+. For older versions, we use the shell prefix.
+	// To be safe across versions, we'll use a bash wrapper that sets environment.
+	
+	var envPrefix strings.Builder
+	// Always set TERM to ensure UI apps work
+	envPrefix.WriteString("export TERM=xterm-256color; ")
+	
 	if t.EnvVars != nil {
 		for key, value := range t.EnvVars {
-			envCmd := exec.Command("tmux", "set-environment", "-t", t.SessionName, key, value)
-			if err := envCmd.Run(); err != nil {
-				// Log but don't fail - not critical
-				fmt.Printf("Warning: failed to set env var %s: %v\n", key, err)
-			}
+			// Basic escaping for environment variable values
+			escapedVal := strings.ReplaceAll(value, "'", "'\\''")
+			fmt.Fprintf(&envPrefix, "export %s='%s'; ", key, escapedVal)
 		}
 	}
 
-	// Set up read-only environment guards if enabled
 	if t.ReadOnly {
-		t.setupReadOnlyGuards()
+		envPrefix.WriteString("export AT_READ_ONLY='1'; export READ_ONLY_MODE='1'; export EDITOR='cat'; export GIT_EDITOR='cat'; ")
+	}
+
+	// 2. Construct the full command
+	// We wrap the command in a bash shell that sets environment variables and then runs the command.
+	// We also include a fallback to keep the session open on failure for debugging.
+	fullCmd := "bash -c \"" + envPrefix.String()
+	if t.Command != "" {
+		// Escape the command for inclusion in the bash -c string
+		escapedCmd := strings.ReplaceAll(t.Command, "\"", "\\\"")
+		escapedCmd = strings.ReplaceAll(escapedCmd, "$", "\\$")
+		fullCmd += fmt.Sprintf("(%s) || { echo -e '\\n[Agent Crash/Exit] The agent process failed with a non-zero exit code. Tmux session kept open for debugging...'; sleep 86400; }", escapedCmd)
+	} else {
+		fullCmd += "exec bash" // Default to an interactive shell if no command
+	}
+	fullCmd += "\""
+
+	// 3. Create the session
+	// -d: detach
+	// -s: session name
+	// -c: start directory
+	args := []string{"new-session", "-d", "-s", t.SessionName, "-c", t.WorktreeDir, fullCmd}
+	cmd := exec.CommandContext(ctx, "tmux", args...)
+	
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to create tmux session %q: %v (output: %s)", t.SessionName, err, output)
 	}
 
 	return nil
 }
 
-// setupReadOnlyGuards configures environment to prevent file writes
-func (t *TmuxSession) setupReadOnlyGuards() {
-	// Set environment variables that tools might respect
-	readOnlyEnv := map[string]string{
-		"AT_READ_ONLY":   "1",
-		"READ_ONLY_MODE": "1",
-		"EDITOR":         "cat", // Prevent editors from opening
-		"GIT_EDITOR":     "cat", // Prevent git from opening editor
-	}
-
-	for key, value := range readOnlyEnv {
-		cmd := exec.Command("tmux", "set-environment", "-t", t.SessionName, key, value)
-		cmd.Run() // Ignore errors, best effort
-	}
-
-	// Send a warning message to the session
-	warning := "\n╔════════════════════════════════════════════════════════════╗\n" +
-		"║  READ-ONLY MODE ENABLED                                    ║\n" +
-		"║  This agent is in exploration mode. File writes are        ║\n" +
-		"║  discouraged. Use 'dwight mail' to report findings.            ║\n" +
-		"╚════════════════════════════════════════════════════════════╝\n"
-	t.SendKeys(warning)
-}
-
-// SendInput sends keystrokes directly to the tmux session, followed by Enter
 // CaptureBuffer reads the last N lines of the tmux pane's output
 func (t *TmuxSession) CaptureBuffer(lines int) (string, error) {
-	// -p: print to stdout
-	// -t: target session
-	// -S: start line (negative for history)
-	// -E: end line
 	args := []string{"capture-pane", "-p", "-t", t.SessionName}
 	if lines > 0 {
 		args = append(args, "-S", fmt.Sprintf("-%d", lines))
@@ -178,7 +155,6 @@ func (t *TmuxSession) Kill() error {
 
 // GetPID returns the process ID of the tmux session's active pane
 func (t *TmuxSession) GetPID() (int, error) {
-	// tmux list-panes -t <session> -F "#{pane_pid}"
 	cmd := exec.Command("tmux", "list-panes", "-t", t.SessionName, "-F", "#{pane_pid}")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -209,7 +185,6 @@ func (t *TmuxSession) Ping() bool {
 }
 
 // CaptureBufferLines reads a specific number of lines from tmux buffer
-// This is useful for Tier 1 AI Triage to analyze last 1000 lines
 func (t *TmuxSession) CaptureBufferLines(lineCount int) (string, error) {
 	args := []string{"capture-pane", "-p", "-t", t.SessionName, "-S", fmt.Sprintf("-%d", lineCount)}
 

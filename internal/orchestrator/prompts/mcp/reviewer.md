@@ -4,13 +4,15 @@ MCP server at 127.0.0.1:{{.MCPPort}} provides communication tools.
 
 ## Available Tools
 
-**Mail:** `mail_send`, `mail_check`
-- Use `type: "result"` for PASS verdicts
-- Use `type: "error"` for FAIL verdicts
+**Mail:**
+- `mail_send`: to="Coordinator", subject, body, type
+- `mail_check`: recipient="reviewer-{{.TaskID}}"
 
-**Debug:** `buffer_capture`
+**Knowledge:** `expertise_list`, `expertise_record`
 
-**Logging:** `log_event`
+**Debug:** `buffer_capture` (agent_id="reviewer-{{.TaskID}}")
+
+**Logging:** `log_event` (agent_id="reviewer-{{.TaskID}}", type, details)
 
 ## Usage
 - Send PASS/FAIL verdict via `mail_send`
