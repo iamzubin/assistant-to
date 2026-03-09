@@ -33,6 +33,13 @@ type MCPTool struct {
 	Handler     func(params json.RawMessage) (interface{}, error)
 }
 
+// MCPToolInfo is used for JSON serialization (excludes Handler function)
+type MCPToolInfo struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema"`
+}
+
 type MCPRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	Method  string          `json:"method"`
@@ -190,12 +197,15 @@ func (s *MCPServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(MCPResponse{
 			JSONRPC: "2.0",
 			Error:   &MCPError{Code: -32700, Message: "Parse error"},
+			ID:      nil,
 		})
 		return
 	}
 
 	resp := s.ProcessRequest(req)
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("Error encoding MCP response: %v", err)
+	}
 }
 
 // ProcessRequest handles an MCP request and returns a response
@@ -210,12 +220,19 @@ func (s *MCPServer) ProcessRequest(req MCPRequest) MCPResponse {
 		s.mu.RLock()
 		tools := s.tools
 		s.mu.RUnlock()
-		resp = MCPResponse{
-			JSONRPC: "2.0",
-			Result: map[string]interface{}{
-				"tools": tools,
-			},
-			ID: req.ID,
+
+		// Convert MCPTool to MCPToolInfo for JSON serialization
+		toolInfos := make([]MCPToolInfo, len(tools))
+		for i, t := range tools {
+			toolInfos[i] = MCPToolInfo{
+				Name:        t.Name,
+				Description: t.Description,
+				InputSchema: t.InputSchema,
+			}
+		}
+
+		resp.Result = map[string]interface{}{
+			"tools": toolInfos,
 		}
 	case "tools/call":
 		var params struct {
@@ -223,11 +240,7 @@ func (s *MCPServer) ProcessRequest(req MCPRequest) MCPResponse {
 			Args json.RawMessage `json:"arguments"`
 		}
 		if err := json.Unmarshal(req.Params, &params); err != nil {
-			resp = MCPResponse{
-				JSONRPC: "2.0",
-				Error:   &MCPError{Code: -32602, Message: "Invalid params"},
-				ID:      req.ID,
-			}
+			resp.Error = &MCPError{Code: -32602, Message: "Invalid params"}
 		} else {
 			s.mu.RLock()
 			var result interface{}
@@ -241,38 +254,25 @@ func (s *MCPServer) ProcessRequest(req MCPRequest) MCPResponse {
 			s.mu.RUnlock()
 
 			if toolErr != nil {
-				resp = MCPResponse{
-					JSONRPC: "2.0",
-					Error:   &MCPError{Code: -32000, Message: toolErr.Error()},
-					ID:      req.ID,
-				}
+				resp.Error = &MCPError{Code: -32000, Message: toolErr.Error()}
 			} else {
-				resp = MCPResponse{
-					JSONRPC: "2.0",
-					Result:  map[string]interface{}{"content": []interface{}{map[string]interface{}{"type": "text", "text": fmt.Sprintf("%v", result)}}},
-					ID:      req.ID,
-				}
+				resp.Result = map[string]interface{}{"content": []interface{}{map[string]interface{}{"type": "text", "text": fmt.Sprintf("%v", result)}}}
 			}
 		}
 	case "initialize":
-		// MCP initialize method
-		resp = MCPResponse{
-			JSONRPC: "2.0",
-			Result: map[string]interface{}{
-				"protocolVersion": "2024-11-05",
-				"serverInfo": map[string]string{
-					"name":    "assistant-to",
-					"version": "1.0.0",
-				},
+		// MCP initialize method - return server capabilities
+		resp.Result = map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"serverInfo": map[string]string{
+				"name":    "assistant-to",
+				"version": "1.0.0",
 			},
-			ID: req.ID,
+			"capabilities": map[string]interface{}{
+				"tools": map[string]interface{}{},
+			},
 		}
 	default:
-		resp = MCPResponse{
-			JSONRPC: "2.0",
-			Error:   &MCPError{Code: -32601, Message: "Method not found"},
-			ID:      req.ID,
-		}
+		resp.Error = &MCPError{Code: -32601, Message: "Method not found"}
 	}
 
 	return resp

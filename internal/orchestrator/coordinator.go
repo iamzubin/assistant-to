@@ -85,24 +85,43 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	c.cancel = cancel
 	defer cancel()
 
+	// Use project-specific ports for multi-instance support
+	apiPort, mcpPort := c.Config.GetProjectPorts(c.PWD)
+
+	// Override config ports with project-specific ones
+	c.Config.API.Port = apiPort
+	c.Config.API.MCPPort = mcpPort
+
+	// Use SINGLE MCP port for all roles - simplifies architecture
+	// All agents connect to the same MCP server
+	config.Info("Project ports - API: %d, MCP: %d", apiPort, mcpPort)
+
 	// Start API server if enabled
 	if c.Config.API.Enabled {
 		c.apiServer = api.NewServer(c.PWD, c.Config, c.DB)
 		if err := c.apiServer.Start(ctx); err != nil {
-			log.Printf("Warning: failed to start API server: %v", err)
+			config.Error("Failed to start API server: %v", err)
 		} else {
-			log.Printf("API server started at http://%s:%d", c.Config.API.Host, c.Config.API.Port)
+			config.Info("API server started at http://%s:%d", c.Config.API.Host, apiPort)
 		}
 	}
 
 	// Start MCP server if enabled
 	if c.Config.API.MCPEnabled {
-		c.mcpServer = api.NewMCPServer(c.Config.API.MCPPort, c.PWD, c.Config, c.DB)
+		c.mcpServer = api.NewMCPServer(mcpPort, c.PWD, c.Config, c.DB)
 		if err := c.mcpServer.Start(ctx); err != nil {
-			log.Printf("Warning: failed to start MCP server: %v", err)
+			config.Error("Failed to start MCP server: %v", err)
 		} else {
-			log.Printf("MCP server started at 127.0.0.1:%d", c.Config.API.MCPPort)
+			config.Info("MCP server started at 127.0.0.1:%d", mcpPort)
 		}
+	}
+
+	// Generate MCP config for coordinator in project root
+	// This allows the coordinator agent to connect to the MCP server
+	if err := c.generateWorktreeMCPConfigs(c.PWD, "Coordinator", "coordinator"); err != nil {
+		config.Error("Failed to generate MCP config for coordinator: %v", err)
+	} else {
+		config.Info("Generated opencode.json in project root for coordinator")
 	}
 
 	// If running indefinitely, loop forever checking for tasks
@@ -439,22 +458,18 @@ func (c *Coordinator) spawnBuilder(ctx context.Context, task db.Task) error {
 	model := c.Config.ModelForRole("Builder")
 	tool := c.Config.RuntimeForRole("Builder")
 
-	// Build command that:
-	// 1. Changes to worktree directory (so opencode can find .opencode.json)
-	// 2. Runs the AI tool with the mission
+	// Build command with env vars for MCP connection
 	var agentCmd string
 	switch tool {
 	case "gemini":
-		// Gemini CLI doesn't support MCP, use REST API only
-		agentCmd = fmt.Sprintf("cd %s && %s --model %s --yolo -p \"$(cat .mission.md)\"",
-			worktreeDir, tool, model)
+		agentCmd = fmt.Sprintf("cd %s && AT_MCP_PORT=%d AT_PROJECT_ROOT=%s AT_AGENT_ROLE=Builder %s --model %s --yolo -p \"$(cat .mission.md)\"",
+			worktreeDir, mcpPort, c.PWD, tool, model)
 	case "opencode":
-		// Opencode automatically reads .opencode.json for MCP config
-		agentCmd = fmt.Sprintf("cd %s && %s --model %s --prompt \"$(cat .mission.md)\"",
-			worktreeDir, tool, model)
+		agentCmd = fmt.Sprintf("cd %s && AT_MCP_PORT=%d AT_PROJECT_ROOT=%s AT_AGENT_ROLE=Builder %s --model %s --prompt \"$(cat .mission.md)\"",
+			worktreeDir, mcpPort, c.PWD, tool, model)
 	default:
-		agentCmd = fmt.Sprintf("cd %s && %s --model %s --prompt \"$(cat .mission.md)\"",
-			worktreeDir, tool, model)
+		agentCmd = fmt.Sprintf("cd %s && AT_MCP_PORT=%d AT_PROJECT_ROOT=%s AT_AGENT_ROLE=Builder %s --model %s --prompt \"$(cat .mission.md)\"",
+			worktreeDir, mcpPort, c.PWD, tool, model)
 	}
 
 	sessionName := sandbox.ProjectPrefix(c.PWD) + taskID
@@ -985,7 +1000,8 @@ func (c *Coordinator) generateToolDocs(role string, allowedTools []string, apiPo
 
 // generateWorktreeMCPConfigs creates MCP configuration files in the worktree for AI tools
 func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID string) error {
-	mcpPort := c.Config.MCPPortForRole(role)
+	// Use env vars - the MCP server will read from these when started
+	// This allows dynamic port assignment per project instance
 
 	// Generate opencode.json (correct format per https://opencode.ai/docs/mcp-servers)
 	opencodeConfig := map[string]interface{}{
@@ -996,10 +1012,10 @@ func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID strin
 				"command": []string{"dwight", "mcp", "serve"},
 				"enabled": true,
 				"environment": map[string]string{
-					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+					"AT_MCP_PORT":     "${AT_MCP_PORT}",
 					"AT_AGENT_ROLE":   role,
 					"AT_TASK_ID":      taskID,
-					"AT_PROJECT_ROOT": c.PWD,
+					"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
 				},
 			},
 		},
@@ -1021,10 +1037,10 @@ func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID strin
 				"command": "dwight",
 				"args":    []string{"mcp", "serve"},
 				"env": map[string]string{
-					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+					"AT_MCP_PORT":     "${AT_MCP_PORT}",
 					"AT_AGENT_ROLE":   role,
 					"AT_TASK_ID":      taskID,
-					"AT_PROJECT_ROOT": c.PWD,
+					"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
 				},
 			},
 		},
@@ -1049,10 +1065,10 @@ func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID strin
 				"command": "dwight",
 				"args":    []string{"mcp", "serve"},
 				"env": map[string]string{
-					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+					"AT_MCP_PORT":     "${AT_MCP_PORT}",
 					"AT_AGENT_ROLE":   role,
 					"AT_TASK_ID":      taskID,
-					"AT_PROJECT_ROOT": c.PWD,
+					"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
 				},
 			},
 		},
@@ -1075,10 +1091,10 @@ func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID strin
 		"command":     "dwight",
 		"args":        []string{"mcp", "serve"},
 		"env": map[string]string{
-			"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+			"AT_MCP_PORT":     "${AT_MCP_PORT}",
 			"AT_AGENT_ROLE":   role,
 			"AT_TASK_ID":      taskID,
-			"AT_PROJECT_ROOT": c.PWD,
+			"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
 		},
 	}
 

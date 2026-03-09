@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -87,6 +89,30 @@ type APIConfig struct {
 	MCPPort    int    `yaml:"mcpPort"`
 }
 
+// GetProjectPorts returns project-specific ports based on the project path hash.
+// This ensures multiple instances can run on the same machine without port conflicts.
+func (c *Config) GetProjectPorts(projectPath string) (apiPort, mcpPort int) {
+	basePort := 15000
+	maxPort := 65000
+
+	// Generate a deterministic hash from the project path
+	hash := sha256.Sum256([]byte(projectPath))
+	// Use first 4 bytes as an offset
+	offset := int(binary.BigEndian.Uint32(hash[:4]))
+
+	// Calculate ports in valid range
+	portRange := maxPort - basePort
+	apiPort = basePort + (offset % portRange)
+	mcpPort = apiPort + 1
+
+	// Ensure we don't exceed max port
+	if mcpPort > maxPort {
+		mcpPort = basePort
+	}
+
+	return apiPort, mcpPort
+}
+
 // Config represents the user's project-level configuration.
 type Config struct {
 	Tool        string                        `yaml:"tool"`
@@ -169,37 +195,38 @@ func Default() *Config {
 				Runtime:      "gemini",
 				Model:        "gemini-2.5-pro",
 				AllowedTools: []string{"mail", "log", "task", "spawn", "buffer", "session", "cleanup", "worktree", "dash"},
-				MCPPort:      8766,
+				MCPPort:      0, // Use API.MCPPort (single MCP server for all roles)
 			},
 			"builder": {
 				Runtime:      "gemini",
 				Model:        "gemini-2.5-flash",
 				AllowedTools: []string{"mail", "log", "buffer"},
-				MCPPort:      8767,
+				MCPPort:      0, // Use API.MCPPort (single MCP server for all roles)
 			},
 			"scout": {
 				Runtime:      "gemini",
 				Model:        "gemini-2.5-flash",
 				AllowedTools: []string{"mail", "log", "buffer"},
-				MCPPort:      8768,
+				MCPPort:      0, // Use API.MCPPort (single MCP server for all roles)
 			},
 			"reviewer": {
 				Runtime:      "gemini",
 				Model:        "gemini-2.5-flash",
 				AllowedTools: []string{"mail", "log", "buffer"},
-				MCPPort:      8769,
+				MCPPort:      0, // Use API.MCPPort (single MCP server for all roles)
 			},
 			"merger": {
 				Runtime:      "gemini",
 				Model:        "gemini-2.5-flash",
 				AllowedTools: []string{"mail", "log", "worktree", "buffer"},
-				MCPPort:      8770,
+				MCPPort:      0, // Use API.MCPPort (single MCP server for all roles)
 			},
 		},
 	}
 }
 
 // Load reads a config.yaml file from the specified path and unmarshals it.
+// After loading, it calculates and applies project-specific ports.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -216,6 +243,11 @@ func Load(path string) (*Config, error) {
 	if conf.Project.Root == "." || conf.Project.Root == "" {
 		conf.Project.Root = filepath.Dir(path)
 	}
+
+	// Calculate and apply project-specific ports for multi-instance support
+	apiPort, mcpPort := conf.GetProjectPorts(conf.Project.Root)
+	conf.API.Port = apiPort
+	conf.API.MCPPort = mcpPort
 
 	return conf, nil
 }

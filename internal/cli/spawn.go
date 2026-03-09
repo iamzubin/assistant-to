@@ -68,6 +68,9 @@ var runCmd = &cobra.Command{
 			model = conf.ModelForRole(spawnRole)
 		}
 
+		// Calculate project-specific MCP port
+		_, mcpPort := conf.GetProjectPorts(pwd)
+
 		// Normalize role (capitalize first letter) to match LoadPrompts convention
 		role := spawnRole
 		if len(role) > 0 {
@@ -134,12 +137,12 @@ var runCmd = &cobra.Command{
 		var agentCmd string
 		switch tool {
 		case "gemini":
-			agentCmd = fmt.Sprintf("AT_AGENT_ROLE=%s %s --model %s --yolo -p \"$(cat .mission.md)\"", role, tool, model)
+			agentCmd = fmt.Sprintf("AT_MCP_PORT=%d AT_PROJECT_ROOT=%s AT_AGENT_ROLE=%s %s --model %s --yolo -p \"$(cat .mission.md)\"", mcpPort, pwd, role, tool, model)
 		case "opencode":
-			agentCmd = fmt.Sprintf("AT_AGENT_ROLE=%s %s --model %s --prompt \"$(cat .mission.md)\"", role, tool, model)
+			agentCmd = fmt.Sprintf("AT_MCP_PORT=%d AT_PROJECT_ROOT=%s AT_AGENT_ROLE=%s %s --model %s --prompt \"$(cat .mission.md)\"", mcpPort, pwd, role, tool, model)
 		default:
 			// Generic fallback
-			agentCmd = fmt.Sprintf("AT_AGENT_ROLE=%s %s --model %s --prompt \"$(cat .mission.md)\"", role, tool, model)
+			agentCmd = fmt.Sprintf("AT_MCP_PORT=%d AT_PROJECT_ROOT=%s AT_AGENT_ROLE=%s %s --model %s --prompt \"$(cat .mission.md)\"", mcpPort, pwd, role, tool, model)
 		}
 
 		// Update mission status if it's a numeric task ID

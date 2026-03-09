@@ -359,31 +359,31 @@ func runInit() error {
 				Runtime:      tool,
 				Model:        modelLarge,
 				AllowedTools: []string{"mail", "log", "task", "spawn", "buffer", "session", "cleanup", "worktree", "dash"},
-				MCPPort:      8766,
+				MCPPort:      0, // Use API.MCPPort (single MCP server)
 			},
 			"builder": {
 				Runtime:      tool,
 				Model:        modelMedium,
 				AllowedTools: []string{"mail", "log", "buffer"},
-				MCPPort:      8767,
+				MCPPort:      0, // Use API.MCPPort (single MCP server)
 			},
 			"scout": {
 				Runtime:      tool,
 				Model:        modelFast,
 				AllowedTools: []string{"mail", "log", "buffer"},
-				MCPPort:      8768,
+				MCPPort:      0, // Use API.MCPPort (single MCP server)
 			},
 			"reviewer": {
 				Runtime:      tool,
 				Model:        modelMedium,
 				AllowedTools: []string{"mail", "log", "buffer"},
-				MCPPort:      8769,
+				MCPPort:      0, // Use API.MCPPort (single MCP server)
 			},
 			"merger": {
 				Runtime:      tool,
 				Model:        modelMedium,
 				AllowedTools: []string{"mail", "log", "worktree", "buffer"},
-				MCPPort:      8770,
+				MCPPort:      0, // Use API.MCPPort (single MCP server)
 			},
 		},
 	}
@@ -574,10 +574,10 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 
 	// Get project root (parent of .assistant-to)
 	projectRoot := filepath.Dir(baseDir)
-	mcpPort := cfg.MCPPortForRole("coordinator")
 
 	// Generate coordinator MCP configs in PROJECT ROOT (not .assistant-to)
-	// The coordinator runs from the main project directory
+	// Use env vars - the server will set these when starting
+	// This allows dynamic port assignment per project instance
 
 	// 1. opencode.json for opencode (correct format per docs)
 	opencodeConfig := map[string]interface{}{
@@ -588,9 +588,9 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 				"command": []string{"dwight", "mcp", "serve"},
 				"enabled": true,
 				"environment": map[string]string{
-					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+					"AT_MCP_PORT":     "${AT_MCP_PORT}",
 					"AT_AGENT_ROLE":   "coordinator",
-					"AT_PROJECT_ROOT": projectRoot,
+					"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
 				},
 			},
 		},
@@ -612,9 +612,9 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 				"command": "dwight",
 				"args":    []string{"mcp", "serve"},
 				"env": map[string]string{
-					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+					"AT_MCP_PORT":     "${AT_MCP_PORT}",
 					"AT_AGENT_ROLE":   "coordinator",
-					"AT_PROJECT_ROOT": projectRoot,
+					"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
 				},
 			},
 		},
@@ -640,9 +640,9 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 				"command": "dwight",
 				"args":    []string{"mcp", "serve"},
 				"env": map[string]string{
-					"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+					"AT_MCP_PORT":     "${AT_MCP_PORT}",
 					"AT_AGENT_ROLE":   "coordinator",
-					"AT_PROJECT_ROOT": projectRoot,
+					"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
 				},
 			},
 		},
@@ -665,9 +665,9 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 		"command":     "dwight",
 		"args":        []string{"mcp", "serve"},
 		"env": map[string]string{
-			"AT_MCP_PORT":     fmt.Sprintf("%d", mcpPort),
+			"AT_MCP_PORT":     "${AT_MCP_PORT}",
 			"AT_AGENT_ROLE":   "coordinator",
-			"AT_PROJECT_ROOT": projectRoot,
+			"AT_PROJECT_ROOT": "${AT_PROJECT_ROOT}",
 		},
 	}
 

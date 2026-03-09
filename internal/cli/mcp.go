@@ -42,10 +42,16 @@ Example usage with opencode:
     }
   }`,
 	Run: func(cmd *cobra.Command, args []string) {
-		pwd, err := findProjectRoot()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to find project root: %v\n", err)
-			os.Exit(1)
+		// First check for env vars - these take priority
+		pwd := os.Getenv("AT_PROJECT_ROOT")
+		if pwd == "" {
+			// Fallback to auto-detection
+			var err error
+			pwd, err = findProjectRoot()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to find project root: %v\n", err)
+				os.Exit(1)
+			}
 		}
 
 		configPath := filepath.Join(pwd, ".assistant-to", "config.yaml")

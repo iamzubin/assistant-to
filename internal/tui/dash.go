@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"os/exec"
@@ -98,18 +100,25 @@ type dashModel struct {
 	newTaskDiff  string
 
 	// State
-	activePane          int // 0: Tasks, 1: Agents, 2: Feed, 3: Coordinator
-	showTasksPane       bool
-	showAgentsPane      bool
-	showCoordinatorPane bool // Default: true
-	feedSortDesc        bool
-	coordinatorBuffer   string
+	activePane      int // 0: Tasks, 1: Agents, 2: Feed
+	showTasksPane   bool
+	showAgentsPane  bool
+	feedSortDesc    bool
+	showQuitConfirm bool
+	quitConfirmed   bool
+
+	// Coordinator info
+	coordinatorRunning bool
+	apiPort            int
+	mcpPort            int
+	serverSessions     []string
 
 	// Styles
 	inactivePaneStyle lipgloss.Style
 	activePaneStyle   lipgloss.Style
 	headerStyle       lipgloss.Style
 	footerStyle       lipgloss.Style
+	confirmStyle      lipgloss.Style
 }
 
 type tickMsg time.Time
@@ -129,16 +138,15 @@ func NewDashModel(database *db.DB, projectRoot string) tea.Model {
 	fList.SetShowStatusBar(true) // Helpful for filtering counts
 
 	m := dashModel{
-		db:                  database,
-		projectRoot:         projectRoot,
-		taskList:            tList,
-		agentList:           aList,
-		feedList:            fList,
-		activePane:          1, // Default to agents pane (agent mode)
-		showTasksPane:       true,
-		showAgentsPane:      true,
-		showCoordinatorPane: true, // Show coordinator by default
-		feedSortDesc:        true,
+		db:             database,
+		projectRoot:    projectRoot,
+		taskList:       tList,
+		agentList:      aList,
+		feedList:       fList,
+		activePane:     1, // Default to agents pane
+		showTasksPane:  true,
+		showAgentsPane: true,
+		feedSortDesc:   true,
 
 		inactivePaneStyle: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -157,6 +165,13 @@ func NewDashModel(database *db.DB, projectRoot string) tea.Model {
 		footerStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#A8A8A8")).
 			MarginTop(1),
+		confirmStyle: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#E8183C")).
+			Background(lipgloss.Color("#1a1a1a")).
+			Foreground(lipgloss.Color("#FAFAFA")).
+			Padding(1, 2).
+			Bold(true),
 	}
 	return m
 }
@@ -248,6 +263,20 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Handle quit confirmation dialog first
+		if m.showQuitConfirm {
+			switch msg.String() {
+			case "y", "Y":
+				// Kill all project sessions before quitting
+				m.cleanupProjectSessions()
+				return m, tea.Quit
+			case "n", "N", "esc":
+				m.showQuitConfirm = false
+				return m, nil
+			}
+			return m, nil
+		}
+
 		// If filtering in a list, do not intercept keys
 		if (m.activePane == 0 && m.taskList.FilterState() == list.Filtering) ||
 			(m.activePane == 1 && m.agentList.FilterState() == list.Filtering) ||
@@ -256,7 +285,11 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
-		case "q", "ctrl+c", "esc":
+		case "q", "ctrl+c":
+			if !m.showQuitConfirm {
+				m.showQuitConfirm = true
+				return m, nil
+			}
 			return m, tea.Quit
 		case "enter":
 			if m.activePane == 1 {
@@ -276,14 +309,37 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "n":
-			if os.Getenv("TMUX") != "" {
-				// Use tmux popup for task addition
-				cmd := exec.Command("tmux", "display-popup", "-E", "-w", "80%", "-h", "80%", "dwight task add")
-				return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			// Spawn task-add in tmux session for reliability
+			prefix := sandbox.ProjectPrefix(m.projectRoot)
+			taskSession := prefix + "task-add"
+
+			// Kill existing task-add session if any
+			killCmd := exec.Command("tmux", "kill-session", "-t", taskSession)
+			killCmd.Run() // Ignore error
+
+			// Create new session for task add
+			exePath, _ := os.Executable()
+			if exePath == "" {
+				exePath = "dwight"
+			}
+
+			cmd := exec.Command("tmux", "new-session", "-d", "-s", taskSession,
+				"-c", m.projectRoot,
+				fmt.Sprintf("%s task add; exec bash", exePath))
+
+			if err := cmd.Run(); err == nil {
+				// Switch to the task-add session
+				tmuxCmd := "switch-client"
+				if os.Getenv("TMUX") == "" {
+					tmuxCmd = "attach-session"
+				}
+
+				switchCmd := exec.Command("tmux", tmuxCmd, "-t", taskSession)
+				return m, tea.ExecProcess(switchCmd, func(err error) tea.Msg {
 					return tickMsg(time.Now())
 				})
 			} else {
-				// Fallback to internal form if not in tmux
+				// Fallback to internal form if tmux fails
 				m.taskForm = m.initTaskForm()
 				return m, m.taskForm.Init()
 			}
@@ -322,8 +378,15 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.resizePanes()
 		case "c":
-			m.showCoordinatorPane = !m.showCoordinatorPane
-			m.resizePanes()
+			// Open Coordinator in tmux popup for interaction
+			if os.Getenv("TMUX") != "" {
+				prefix := sandbox.ProjectPrefix(m.projectRoot)
+				coordSession := prefix + "coordinator"
+				cmd := exec.Command("tmux", "display-popup", "-E", "-w", "80%", "-h", "80%", "-t", coordSession)
+				return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+					return tickMsg(time.Now())
+				})
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -371,35 +434,29 @@ func (m *dashModel) resizePanes() {
 	hBord := 4
 	vBord := 2
 
-	// Decide if we should show the coordinator pane
-	// We show it if width > 160 or height > 50
-	m.showCoordinatorPane = m.width > 160 || m.height > 50
-
+	// 3-pane layout: Tasks (left), Agents (top-right), Feed (bottom-right)
 	leftWidth := 0
 	if m.showTasksPane {
-		leftWidth = (m.width * 30) / 100
+		leftWidth = (m.width * 35) / 100
 	}
 
 	rightWidth := m.width - leftWidth
-	if m.showCoordinatorPane {
-		rightWidth = (rightWidth * 60) / 100
-	}
 
-	// rightWidth is now calculated based on whether the coordinator pane is shown
-	topRightHeight := 0
+	// Split right side into Agents (top 45%) and Feed (bottom 55%)
+	agentsHeight := 0
 	if m.showAgentsPane {
-		topRightHeight = (m.height * 40) / 100
+		agentsHeight = (m.height * 45) / 100
 	}
 
-	// Account for the global footer height (approx 2 lines)
-	feedHeight := m.height - topRightHeight - 2
+	// Feed takes remaining space (minus footer)
+	feedHeight := m.height - agentsHeight - 3
 
 	if m.showTasksPane {
 		m.taskList.SetSize(leftWidth-hBord, m.height-vBord-3)
 	}
 
 	if m.showAgentsPane {
-		m.agentList.SetSize(rightWidth-hBord, topRightHeight-vBord)
+		m.agentList.SetSize(rightWidth-hBord, agentsHeight-vBord)
 	}
 
 	m.feedList.SetSize(rightWidth-hBord, feedHeight-vBord)
@@ -492,17 +549,44 @@ func (m *dashModel) refreshData() {
 	}
 	m.feedList.SetItems(feedItems)
 
-	// Coordinator Live View
-	if m.showCoordinatorPane {
-		coordSession := prefix + "Coordinator"
-		// Capture last 50 lines
-		captureCmd := exec.Command("tmux", "capture-pane", "-p", "-t", coordSession, "-S", "-50")
-		if out, err := captureCmd.Output(); err == nil {
-			m.coordinatorBuffer = string(out)
-		} else {
-			m.coordinatorBuffer = "Coordinator session not found or inactive."
-		}
+	// Coordinator Status
+	coordSession := prefix + "coordinator"
+	coordCheck := exec.Command("tmux", "has-session", "-t", coordSession)
+	m.coordinatorRunning = coordCheck.Run() == nil
+
+	// Get project-specific ports
+	apiPort, mcpPort := getProjectPorts(m.projectRoot)
+	m.apiPort = apiPort
+	m.mcpPort = mcpPort
+
+	// Get server sessions
+	var sessions []string
+	serversSession := prefix + "servers"
+	serversCheck := exec.Command("tmux", "has-session", "-t", serversSession)
+	if serversCheck.Run() == nil {
+		sessions = append(sessions, "servers")
 	}
+	if m.coordinatorRunning {
+		sessions = append(sessions, "coordinator")
+	}
+	m.serverSessions = sessions
+}
+
+// getProjectPorts calculates project-specific ports
+func getProjectPorts(projectPath string) (apiPort, mcpPort int) {
+	basePort := 15000
+	maxPort := 65000
+
+	hash := sha256.Sum256([]byte(projectPath))
+	offset := int(binary.BigEndian.Uint32(hash[:4]))
+
+	portRange := maxPort - basePort
+	apiPort = basePort + (offset % portRange)
+	mcpPort = apiPort + 1
+	if mcpPort > maxPort {
+		mcpPort = basePort
+	}
+	return apiPort, mcpPort
 }
 
 func boolStatus(b bool) string {
@@ -510,6 +594,37 @@ func boolStatus(b bool) string {
 		return "✓"
 	}
 	return "✗"
+}
+
+// cleanupProjectSessions kills all tmux sessions for this project
+func (m *dashModel) cleanupProjectSessions() {
+	prefix := sandbox.ProjectPrefix(m.projectRoot)
+
+	// List all tmux sessions
+	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	out, err := cmd.Output()
+	if err != nil {
+		return // No tmux server or no sessions
+	}
+
+	sessions := strings.Split(strings.TrimSpace(string(out)), "\n")
+	killedCount := 0
+
+	for _, session := range sessions {
+		session = strings.TrimSpace(session)
+		// Kill sessions managed by this project's orchestrator (including task-add)
+		if strings.HasPrefix(session, prefix) {
+			killCmd := exec.Command("tmux", "kill-session", "-t", session)
+			if err := killCmd.Run(); err == nil {
+				killedCount++
+			}
+		}
+	}
+
+	// Log the cleanup
+	if killedCount > 0 {
+		m.db.RecordEvent("dashboard", "cleanup", fmt.Sprintf("Killed %d project sessions on exit", killedCount))
+	}
 }
 
 func (m dashModel) View() string {
@@ -528,6 +643,13 @@ func (m dashModel) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 	}
 
+	// Show quit confirmation dialog
+	if m.showQuitConfirm {
+		confirmText := "⚠️  Quit and stop all agents?\n\nThis will kill:\n• Coordinator\n• All builder agents\n• API/MCP servers\n\n[y] Yes, stop everything  [n] No, keep running"
+		confirmBox := m.confirmStyle.Width(50).Render(confirmText)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, confirmBox)
+	}
+
 	getStyle := func(paneIdx int) lipgloss.Style {
 		if m.activePane == paneIdx {
 			return m.activePaneStyle
@@ -538,66 +660,76 @@ func (m dashModel) View() string {
 	hBord := 4
 	vBord := 2
 
-	// 4-panel grid: [Tasks 25%] [Agents 25%] [Feed 25%] [Coord 25%]
-	taskWidth := (m.width * 25) / 100
-	agentWidth := (m.width * 25) / 100
-	feedWidth := (m.width * 25) / 100
-	coordWidth := m.width - taskWidth - agentWidth - feedWidth - hBord*4
-	topHeight := (m.height * 55) / 100
+	// 3-panel layout: [Tasks 35%] [Agents 65% top 45%] [Feed 65% bottom 55%]
+	taskWidth := 0
+	if m.showTasksPane {
+		taskWidth = (m.width * 35) / 100
+	}
+	rightWidth := m.width - taskWidth
+
+	agentsHeight := 0
+	if m.showAgentsPane {
+		agentsHeight = (m.height * 45) / 100
+	}
+	feedHeight := m.height - agentsHeight - 3
 
 	// Build each pane
-	var taskPane, agentPane, feedPane, coordPane string
+	var taskPane, agentPane, feedPane string
 
 	if m.showTasksPane {
-		taskPane = getStyle(0).Width(taskWidth - hBord).Height(m.height - vBord - 2).Render(m.taskList.View())
+		taskPane = getStyle(0).Width(taskWidth - hBord).Height(m.height - vBord - 3).Render(m.taskList.View())
 	}
 
 	if m.showAgentsPane {
-		agentPane = getStyle(1).Width(agentWidth - hBord).Height(m.height - vBord - 2).Render(m.agentList.View())
+		agentPane = getStyle(1).Width(rightWidth - hBord).Height(agentsHeight - vBord).Render(m.agentList.View())
 	}
 
-	feedPane = getStyle(2).Width(feedWidth - hBord).Height(topHeight - vBord).Render(m.feedList.View())
+	feedPane = getStyle(2).Width(rightWidth - hBord).Height(feedHeight - vBord).Render(m.feedList.View())
 
-	if m.showCoordinatorPane {
-		coordPane = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#00ADD8")).
-			Width(coordWidth).
-			Height(topHeight-vBord).
-			Padding(0, 1).
-			Render(lipgloss.JoinVertical(lipgloss.Left,
-				lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00ADD8")).Render("Coordinator"),
-				m.coordinatorBuffer,
-			))
-	}
+	// Right column: Agents on top, Feed on bottom
+	rightColumn := lipgloss.JoinVertical(lipgloss.Left, agentPane, feedPane)
 
-	// Top row: Tasks | Agents | Feed | Coord
-	topRow := ""
-	if m.showTasksPane && m.showAgentsPane && m.showCoordinatorPane {
-		topRow = lipgloss.JoinHorizontal(lipgloss.Top, taskPane, agentPane, feedPane, coordPane)
-	} else if m.showTasksPane && m.showAgentsPane {
-		topRow = lipgloss.JoinHorizontal(lipgloss.Top, taskPane, agentPane, feedPane)
-	} else if m.showTasksPane {
-		topRow = lipgloss.JoinHorizontal(lipgloss.Top, taskPane, feedPane)
-	} else if m.showAgentsPane {
-		topRow = lipgloss.JoinHorizontal(lipgloss.Top, agentPane, feedPane)
+	// Main layout
+	var mainRow string
+	if m.showTasksPane {
+		mainRow = lipgloss.JoinHorizontal(lipgloss.Top, taskPane, rightColumn)
 	} else {
-		topRow = feedPane
+		mainRow = rightColumn
 	}
 
 	// Status indicators
-	coordStatus := boolStatus(m.showCoordinatorPane)
 	taskStatus := boolStatus(m.showTasksPane)
 	agentStatus := boolStatus(m.showAgentsPane)
+
+	// Coordinator status for header
+	coordIndicator := "✗"
+	coordColor := "#E8183C"
+	if m.coordinatorRunning {
+		coordIndicator = "●"
+		coordColor = "#04B575"
+	}
 
 	sortStr := "DESC"
 	if !m.feedSortDesc {
 		sortStr = "ASC"
 	}
 
-	footerText := fmt.Sprintf(" [n] new • [enter] attach • [t] %s tasks • [a] %s agents • [c] %s coord • [s] %s • [q] quit ",
-		taskStatus, agentStatus, coordStatus, sortStr)
+	// Header with coordinator status
+	headerText := fmt.Sprintf(" Coordinator: %s | API: %d | MCP: %d ",
+		lipgloss.NewStyle().Foreground(lipgloss.Color(coordColor)).Render(coordIndicator),
+		m.apiPort, m.mcpPort)
+	header := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FAFAFA")).
+		Background(lipgloss.Color("#7D56F4")).
+		Padding(0, 1).
+		Width(m.width).
+		Render(headerText)
+
+	// Footer with keybindings
+	footerText := fmt.Sprintf(" [n] new task • [enter] attach agent • [c] coordinator • [t] %s tasks • [a] %s agents • [s] %s • [q] quit ",
+		taskStatus, agentStatus, sortStr)
 	footer := m.footerStyle.Width(m.width).Align(lipgloss.Right).Render(footerText)
 
-	return lipgloss.JoinVertical(lipgloss.Left, topRow, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, header, mainRow, footer)
 }
