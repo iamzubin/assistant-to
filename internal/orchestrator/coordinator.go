@@ -906,12 +906,6 @@ func (c *Coordinator) cleanupOrphanSessions(prefix string, orphanTimeout time.Du
 
 // getMainBranchPath returns the path to the main branch (project root)
 func (c *Coordinator) getMainBranchPath() string {
-	if c.Config.Project.Root != "" && c.Config.Project.Root != "." {
-		absRoot, err := filepath.Abs(c.Config.Project.Root)
-		if err == nil {
-			return absRoot
-		}
-	}
 	return c.PWD
 }
 
