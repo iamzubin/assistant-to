@@ -97,6 +97,19 @@ func (d *DB) InitSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_expertise_type ON expertise(type);
 	CREATE INDEX IF NOT EXISTS idx_token_metrics_agent ON token_metrics(agent_id);
 	CREATE INDEX IF NOT EXISTS idx_token_metrics_task ON token_metrics(task_id);
+
+	CREATE TABLE IF NOT EXISTS checkpoints (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		task_id INTEGER NOT NULL,
+		agent_role TEXT NOT NULL,
+		agent_identity TEXT NOT NULL,
+		context_snapshot TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		expires_at DATETIME NOT NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_checkpoints_task_role ON checkpoints(task_id, agent_role);
+	CREATE INDEX IF NOT EXISTS idx_checkpoints_expires ON checkpoints(expires_at);
 	`
 	_, err := d.Exec(schema)
 	if err != nil {
@@ -106,6 +119,9 @@ func (d *DB) InitSchema() error {
 	// Migrations
 	_, _ = d.Exec("ALTER TABLE mail ADD COLUMN body_path TEXT")
 	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_mail_body_path ON mail(body_path)")
+
+	// Clean up expired checkpoints on startup
+	_, _ = d.Exec("DELETE FROM checkpoints WHERE expires_at < datetime('now')")
 
 	// Enable foreign keys
 	_, err = d.Exec("PRAGMA foreign_keys = ON;")

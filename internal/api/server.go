@@ -63,6 +63,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/tokens/summary", s.handleTokensSummary)
 	mux.HandleFunc("/api/tokens/top", s.handleTokensTop)
 	mux.HandleFunc("/api/tokens/extract", s.handleTokensExtract)
+	mux.HandleFunc("/api/checkpoints", s.handleCheckpointSave)
+	mux.HandleFunc("/api/checkpoints/", s.handleCheckpointGet)
 
 	s.httpServer = &http.Server{
 		Addr:    addr,
@@ -643,4 +645,91 @@ func (s *Server) handleTokensExtract(w http.ResponseWriter, r *http.Request) {
 		"cost_usd":          parsedMetrics.CostUSD,
 		"model":             parsedMetrics.Model,
 	}})
+}
+
+func (s *Server) handleCheckpointSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.jsonResponse(w, APIResponse{Success: false, Error: "POST only"})
+		return
+	}
+
+	var req struct {
+		TaskID          int             `json:"task_id"`
+		AgentRole       string          `json:"agent_role"`
+		AgentIdentity   string          `json:"agent_identity"`
+		ContextSnapshot json.RawMessage `json:"context_snapshot"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	if req.TaskID == 0 || req.AgentRole == "" {
+		s.jsonResponse(w, APIResponse{Success: false, Error: "task_id and agent_role required"})
+		return
+	}
+
+	if req.AgentIdentity == "" {
+		req.AgentIdentity = req.AgentRole
+	}
+
+	err := s.db.CheckpointSave(req.TaskID, req.AgentRole, req.AgentIdentity, req.ContextSnapshot)
+	if err != nil {
+		s.jsonResponse(w, APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, APIResponse{Success: true})
+}
+
+func (s *Server) handleCheckpointGet(w http.ResponseWriter, r *http.Request) {
+	taskIDStr := r.URL.Path[len("/api/checkpoints/"):]
+	if taskIDStr == "" {
+		s.jsonResponse(w, APIResponse{Success: false, Error: "task_id required"})
+		return
+	}
+
+	taskID, err := strconv.Atoi(taskIDStr)
+	if err != nil {
+		s.jsonResponse(w, APIResponse{Success: false, Error: "invalid task_id"})
+		return
+	}
+
+	role := r.URL.Query().Get("role")
+
+	if r.Method == http.MethodDelete {
+		if role == "" {
+			s.jsonResponse(w, APIResponse{Success: false, Error: "role required for delete"})
+			return
+		}
+		err := s.db.CheckpointDelete(taskID, role)
+		if err != nil {
+			s.jsonResponse(w, APIResponse{Success: false, Error: err.Error()})
+			return
+		}
+		s.jsonResponse(w, APIResponse{Success: true})
+		return
+	}
+
+	if role != "" {
+		checkpoint, err := s.db.CheckpointLoad(taskID, role)
+		if err != nil {
+			s.jsonResponse(w, APIResponse{Success: false, Error: err.Error()})
+			return
+		}
+		if checkpoint == nil {
+			s.jsonResponse(w, APIResponse{Success: true, Data: nil})
+			return
+		}
+		s.jsonResponse(w, APIResponse{Success: true, Data: checkpoint})
+		return
+	}
+
+	checkpoints, err := s.db.CheckpointListByTaskID(taskID)
+	if err != nil {
+		s.jsonResponse(w, APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, APIResponse{Success: true, Data: checkpoints})
 }
