@@ -105,7 +105,7 @@ This launches:
 		} else {
 			// Spawn the Coordinator AI agent with env vars
 			coordCmd := exec.Command("tmux", "new-session", "-d", "-s", coordSession,
-				fmt.Sprintf("AT_MCP_PORT=%d AT_PROJECT_ROOT=%s %s run Coordinator --role Coordinator 2>&1", mcpPort, pwd, exePath))
+				fmt.Sprintf("AT_MCP_PORT=%d AT_PROJECT_ROOT=%s %s spawn Coordinator --role Coordinator 2>&1", mcpPort, pwd, exePath))
 			if err := coordCmd.Run(); err != nil {
 				fmt.Printf("Failed to start Coordinator agent: %v\n", err)
 			} else {

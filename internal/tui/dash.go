@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"dwight/internal/db"
@@ -228,9 +227,6 @@ type dashModel struct {
 	headerStyle       lipgloss.Style
 	footerStyle       lipgloss.Style
 	confirmStyle      lipgloss.Style
-
-	// Synchronization
-	mu sync.Mutex
 }
 
 type tickMsg time.Time
@@ -315,9 +311,6 @@ func (m *dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd  tea.Cmd
 		cmds []tea.Cmd
 	)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -478,17 +471,21 @@ const (
 )
 
 func (m *dashModel) resizePanes() {
-	if !m.ready {
+	if !m.ready || m.width <= 0 || m.height <= 0 {
 		return
 	}
 
-	if m.width <= 0 || m.height <= 0 {
-		return
+	// Constants for borders/gutters
+	hBord := 4 // 2 border + 2 padding
+	vBord := 2 // 2 border
+
+	// availableHeight for the main area (excluding header and footer)
+	availableHeight := m.height - 2
+	if availableHeight < 5 {
+		availableHeight = 5
 	}
 
-	hBord := 4
-	vBord := 2
-
+	// Calculate column widths
 	tokensWidth := 0
 	if m.showTokensPane {
 		tokensWidth = tokenPaneWidth
@@ -497,59 +494,64 @@ func (m *dashModel) resizePanes() {
 		}
 	}
 
-	leftWidth := 0
+	taskWidth := 0
 	if m.showTasksPane {
-		leftWidth = (m.width * 30) / 100
-		if leftWidth < minTaskPaneWidth {
-			leftWidth = minTaskPaneWidth
+		taskWidth = (m.width * 30) / 100
+		if taskWidth < minTaskPaneWidth {
+			taskWidth = minTaskPaneWidth
 		}
 	}
 
-	centerWidth := m.width - leftWidth - tokensWidth
+	// Ensure center column gets at least minCenterPaneWidth
+	centerWidth := m.width - taskWidth - tokensWidth
 	if centerWidth < minCenterPaneWidth {
 		centerWidth = minCenterPaneWidth
+		// If we're cramped, shrink tasks first then tokens
+		if m.showTasksPane {
+			taskWidth = m.width - centerWidth - tokensWidth
+			if taskWidth < 10 { // Absolute minimum
+				taskWidth = 0 // Hide it if too small
+				centerWidth = m.width - tokensWidth
+			}
+		}
 	}
 
+	// Final verification of width sum
+	if taskWidth+centerWidth+tokensWidth > m.width {
+		centerWidth = m.width - taskWidth - tokensWidth
+	}
+
+	// Calculate row heights in the center column
 	agentsHeight := 0
 	if m.showAgentsPane {
-		agentsHeight = (m.height * 45) / 100
+		agentsHeight = (availableHeight * 45) / 100
 		if agentsHeight < minAgentPaneHeight {
 			agentsHeight = minAgentPaneHeight
 		}
 	}
-
-	feedHeight := m.height - agentsHeight - 3
+	feedHeight := availableHeight - agentsHeight
 	if feedHeight < 5 {
 		feedHeight = 5
-	}
-
-	if m.showTasksPane {
-		taskPaneHeight := m.height - vBord - 3
-		if taskPaneHeight < 1 {
-			taskPaneHeight = 1
+		if m.showAgentsPane {
+			agentsHeight = availableHeight - feedHeight
 		}
-		m.taskList.SetSize(leftWidth-hBord, taskPaneHeight)
 	}
 
-	if m.showAgentsPane {
-		agentPaneHeight := agentsHeight - vBord
-		if agentPaneHeight < 1 {
-			agentPaneHeight = 1
-		}
-		m.agentList.SetSize(centerWidth-hBord, agentPaneHeight)
+	// Apply sizes to components
+	if m.showTasksPane && taskWidth > hBord {
+		m.taskList.SetSize(taskWidth-hBord, availableHeight-vBord)
 	}
 
-	feedPaneHeight := feedHeight - vBord
-	if feedPaneHeight < 1 {
-		feedPaneHeight = 1
+	if m.showAgentsPane && agentsHeight > vBord {
+		m.agentList.SetSize(centerWidth-hBord, agentsHeight-vBord)
 	}
-	m.feedList.SetSize(centerWidth-hBord, feedPaneHeight)
+
+	if feedHeight > vBord {
+		m.feedList.SetSize(centerWidth-hBord, feedHeight-vBord)
+	}
 }
 
 func (m *dashModel) refreshData() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.db == nil {
 		return
 	}
@@ -789,8 +791,13 @@ func (m *dashModel) View() string {
 		return m.inactivePaneStyle
 	}
 
+	// Re-calculate dimensions for verification (sync with resizePanes)
 	hBord := 4
 	vBord := 2
+	availableHeight := m.height - 2
+	if availableHeight < 5 {
+		availableHeight = 5
+	}
 
 	tokensWidth := 0
 	if m.showTokensPane {
@@ -807,51 +814,67 @@ func (m *dashModel) View() string {
 			taskWidth = minTaskPaneWidth
 		}
 	}
+
 	centerWidth := m.width - taskWidth - tokensWidth
 	if centerWidth < minCenterPaneWidth {
 		centerWidth = minCenterPaneWidth
+		if m.showTasksPane {
+			taskWidth = m.width - centerWidth - tokensWidth
+			if taskWidth < 10 {
+				taskWidth = 0
+				centerWidth = m.width - tokensWidth
+			}
+		}
+	}
+	if taskWidth+centerWidth+tokensWidth > m.width {
+		centerWidth = m.width - taskWidth - tokensWidth
 	}
 
 	agentsHeight := 0
 	if m.showAgentsPane {
-		agentsHeight = (m.height * 45) / 100
+		agentsHeight = (availableHeight * 45) / 100
 		if agentsHeight < minAgentPaneHeight {
 			agentsHeight = minAgentPaneHeight
 		}
 	}
-	feedHeight := m.height - agentsHeight - 3
+	feedHeight := availableHeight - agentsHeight
 	if feedHeight < 5 {
 		feedHeight = 5
+		if m.showAgentsPane {
+			agentsHeight = availableHeight - feedHeight
+		}
 	}
 
 	// Build each pane
 	var taskPane, agentPane, feedPane, tokenPane string
 
-	if m.showTasksPane {
-		taskPane = getStyle(0).Width(taskWidth - hBord).Height(m.height - vBord - 3).Render(m.taskList.View())
+	if m.showTasksPane && taskWidth > 0 {
+		taskPane = getStyle(0).Width(taskWidth - hBord).Height(availableHeight - vBord).Render(m.taskList.View())
 	}
 
-	if m.showAgentsPane {
+	if m.showAgentsPane && agentsHeight > 0 {
 		agentPane = getStyle(1).Width(centerWidth - hBord).Height(agentsHeight - vBord).Render(m.agentList.View())
 	}
 
-	feedPane = getStyle(2).Width(centerWidth - hBord).Height(feedHeight - vBord).Render(m.feedList.View())
+	if feedHeight > 0 {
+		feedPane = getStyle(2).Width(centerWidth - hBord).Height(feedHeight - vBord).Render(m.feedList.View())
+	}
 
 	// Token pane
-	if m.showTokensPane {
-		tokenPane = m.renderTokenPane(tokensWidth - hBord)
+	if m.showTokensPane && tokensWidth > 0 {
+		tokenPane = m.renderTokenPane(tokensWidth, availableHeight)
 	}
 
 	// Center column: Agents on top, Feed on bottom
 	centerColumn := lipgloss.JoinVertical(lipgloss.Left, agentPane, feedPane)
 
-	// Main layout
+	// Main layout row
 	var mainRow string
-	if m.showTasksPane && m.showTokensPane {
+	if m.showTasksPane && taskWidth > 0 && m.showTokensPane && tokensWidth > 0 {
 		mainRow = lipgloss.JoinHorizontal(lipgloss.Top, taskPane, centerColumn, tokenPane)
-	} else if m.showTasksPane {
+	} else if m.showTasksPane && taskWidth > 0 {
 		mainRow = lipgloss.JoinHorizontal(lipgloss.Top, taskPane, centerColumn)
-	} else if m.showTokensPane {
+	} else if m.showTokensPane && tokensWidth > 0 {
 		mainRow = lipgloss.JoinHorizontal(lipgloss.Top, centerColumn, tokenPane)
 	} else {
 		mainRow = centerColumn
@@ -899,8 +922,13 @@ func (m *dashModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, mainRow, footer)
 }
 
-func (m *dashModel) renderTokenPane(width int) string {
-	style := m.inactivePaneStyle.Width(width).Height(m.height - 5)
+func (m *dashModel) renderTokenPane(width, height int) string {
+	hBord := 4
+	vBord := 2
+	style := m.inactivePaneStyle.Width(width - hBord).Height(height - vBord)
+	if m.activePane == 3 {
+		style = m.activePaneStyle.Width(width - hBord).Height(height - vBord)
+	}
 
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700"))
 	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FAFAFA"))
@@ -936,7 +964,7 @@ func (m *dashModel) renderTokenPane(width int) string {
 		}
 	}
 
-	content := lipgloss.NewStyle().Width(width - 2).Render(strings.Join(lines, "\n"))
+	content := lipgloss.NewStyle().Width(width - hBord - 2).Render(strings.Join(lines, "\n"))
 	return style.Render(content)
 }
 

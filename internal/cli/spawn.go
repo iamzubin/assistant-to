@@ -26,11 +26,12 @@ var (
 	spawnSkill  string
 )
 
-var runCmd = &cobra.Command{
-	Use:   "run <task-id>",
-	Short: "Run an agent for a specific task",
-	Long:  `Creates an isolated worktree and spawns a new tmux session for an agent targeting the specified task.`,
-	Args:  cobra.ExactArgs(1),
+var spawnCmd = &cobra.Command{
+	Use:     "spawn <target>",
+	Aliases: []string{"run"},
+	Short:   "Run an agent for a specific task",
+	Long:    `Creates an isolated worktree and spawns a new tmux session for an agent targeting the specified task.`,
+	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		taskID := args[0]
 		pwd, err := findProjectRoot()
@@ -569,14 +570,14 @@ var listCmd = &cobra.Command{
 }
 
 func init() {
-	runCmd.Flags().StringVarP(&spawnModel, "model", "m", "", "Model for the agent to use (set to 'auto' to use last used model)")
-	runCmd.Flags().StringVarP(&spawnRole, "role", "r", "Builder", "Role of the agent (e.g., Builder, Reviewer)")
-	runCmd.Flags().StringVarP(&spawnPrompt, "prompt", "p", "", "Initial prompt or context for the agent")
-	runCmd.Flags().StringVarP(&spawnTool, "tool", "t", "", "Runtime tool to use (gemini, opencode) - defaults to config or role setting")
-	runCmd.Flags().StringVarP(&spawnAgent, "agent", "a", "", "Custom OpenCode agent to use (discovered from .opencode/agents or ~/.config/opencode/agents)")
-	runCmd.Flags().StringVarP(&spawnSkill, "skill", "s", "", "Gemini skill to use (discovered from .gemini/skills or ~/.gemini/skills)")
+	spawnCmd.Flags().StringVarP(&spawnModel, "model", "m", "", "Model for the agent to use (set to 'auto' to use last used model)")
+	spawnCmd.Flags().StringVarP(&spawnRole, "role", "r", "Builder", "Role of the agent (e.g., Builder, Reviewer)")
+	spawnCmd.Flags().StringVarP(&spawnPrompt, "prompt", "p", "", "Initial prompt or context for the agent")
+	spawnCmd.Flags().StringVarP(&spawnTool, "tool", "t", "", "Runtime tool to use (gemini, opencode) - defaults to config or role setting")
+	spawnCmd.Flags().StringVarP(&spawnAgent, "agent", "a", "", "Custom OpenCode agent to use (discovered from .opencode/agents or ~/.config/opencode/agents)")
+	spawnCmd.Flags().StringVarP(&spawnSkill, "skill", "s", "", "Gemini skill to use (discovered from .gemini/skills or ~/.gemini/skills)")
 
-	RootCmd.AddCommand(runCmd)
+	RootCmd.AddCommand(spawnCmd)
 	RootCmd.AddCommand(connectCmd)
 	RootCmd.AddCommand(listCmd)
 	listCmd.AddCommand(listAgentsCmd)

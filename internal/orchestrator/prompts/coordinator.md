@@ -61,7 +61,9 @@ You have full oversight. Use these patterns:
 
 ## Common Failures & Recovery
 - **"Session not found"**: The agent crashed or exited early. Check `event_list` or `mail_list` for errors.
-- **Stalled Agent**: If no mail or events for 5 minutes, `buffer_capture` to see why. Use `session_send` to nudge or `session_kill` + `agent_spawn` to restart the phase.
+```markdown
+- **Stalled Agent**: If no mail or events for 5 minutes, `buffer_capture` to see why. Use `session_send` to nudge ( always simulate Enter key) or `session_kill` + `agent_spawn` to restart the phase.
+```
 
 ## Constraints
 - **NEVER wait for user input** - you are fully autonomous
