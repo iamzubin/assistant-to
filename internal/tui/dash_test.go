@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"dwight/internal/db"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestFeedItemDescriptionTruncation(t *testing.T) {
@@ -337,6 +339,138 @@ func TestSanitizeSessionName(t *testing.T) {
 			got := sanitizeSessionName(tt.input)
 			if got != tt.expected {
 				t.Errorf("sanitizeSessionName(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNewDashModelWithNilDB(t *testing.T) {
+	model := NewDashModel(nil, "/test/path")
+	m, ok := model.(*dashModel)
+	if !ok {
+		t.Fatal("expected *dashModel")
+	}
+	if m.projectRoot != "/test/path" {
+		t.Errorf("projectRoot = %q, want %q", m.projectRoot, "/test/path")
+	}
+	if m.width != 80 || m.height != 24 {
+		t.Errorf("dimensions = (%d, %d), want (80, 24)", m.width, m.height)
+	}
+}
+
+func TestViewWithZeroDimensions(t *testing.T) {
+	m := &dashModel{
+		width:  0,
+		height: 0,
+		ready:  true,
+	}
+	view := m.View()
+	if view == "" {
+		t.Error("View() should not return empty string")
+	}
+	if m.width != 80 || m.height != 24 {
+		t.Logf("View() normalized dimensions to (%d, %d)", m.width, m.height)
+	}
+}
+
+func TestViewWithNegativeDimensions(t *testing.T) {
+	m := &dashModel{
+		width:  -10,
+		height: -5,
+		ready:  true,
+	}
+	view := m.View()
+	if view == "" {
+		t.Error("View() should not return empty string")
+	}
+}
+
+func TestViewNotReady(t *testing.T) {
+	m := &dashModel{
+		width:  80,
+		height: 24,
+		ready:  false,
+	}
+	view := m.View()
+	expected := "Initializing Dashboard"
+	if !strings.Contains(view, expected) {
+		t.Errorf("View() = %q, want to contain %q", view, expected)
+	}
+}
+
+func TestViewWithQuitConfirm(t *testing.T) {
+	m := &dashModel{
+		width:           80,
+		height:          24,
+		ready:           true,
+		showQuitConfirm: true,
+	}
+	view := m.View()
+	if !strings.Contains(view, "Quit") {
+		t.Error("View() should show quit confirmation")
+	}
+}
+
+func TestDashModelImplementsTeaModel(t *testing.T) {
+	var _ tea.Model = &dashModel{}
+}
+
+func TestGetProjectPorts(t *testing.T) {
+	apiPort, mcpPort := getProjectPorts("/test/path")
+	if apiPort <= 0 || mcpPort <= 0 {
+		t.Errorf("Ports should be positive: api=%d, mcp=%d", apiPort, mcpPort)
+	}
+	if mcpPort != apiPort+1 {
+		t.Errorf("mcpPort should be apiPort+1: api=%d, mcp=%d", apiPort, mcpPort)
+	}
+}
+
+func TestStatusColor(t *testing.T) {
+	tests := []struct {
+		status string
+		valid  bool
+	}{
+		{"complete", true},
+		{"failed", true},
+		{"building", true},
+		{"merging", true},
+		{"review", true},
+		{"scouted", true},
+		{"started", true},
+		{"unknown", true},
+		{"", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			color := statusColor(tt.status)
+			if color == "" {
+				t.Error("statusColor should not return empty color")
+			}
+		})
+	}
+}
+
+func TestPriorityIndicator(t *testing.T) {
+	tests := []struct {
+		priority int
+		expected string
+	}{
+		{1, "🔥"},
+		{2, "⚡"},
+		{3, "●"},
+		{4, "○"},
+		{5, "◌"},
+		{0, "●"},
+		{6, "●"},
+		{-1, "●"},
+	}
+
+	for _, tt := range tests {
+		t.Run("", func(t *testing.T) {
+			got := priorityIndicator(tt.priority)
+			if got != tt.expected {
+				t.Errorf("priorityIndicator(%d) = %q, want %q", tt.priority, got, tt.expected)
 			}
 		})
 	}

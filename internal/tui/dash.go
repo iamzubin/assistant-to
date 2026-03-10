@@ -237,7 +237,7 @@ type tickMsg time.Time
 
 func NewDashModel(database *db.DB, projectRoot string) tea.Model {
 	if database == nil {
-		m := dashModel{
+		m := &dashModel{
 			projectRoot: projectRoot,
 			width:       80,
 			height:      24,
@@ -294,27 +294,30 @@ func NewDashModel(database *db.DB, projectRoot string) tea.Model {
 			Padding(1, 2).
 			Bold(true),
 	}
-	return m
+	return &m
 }
 
-func (m dashModel) Init() tea.Cmd {
+func (m *dashModel) Init() tea.Cmd {
 	return tea.Batch(
 		tea.EnterAltScreen,
 		m.tick(),
 	)
 }
 
-func (m dashModel) tick() tea.Cmd {
+func (m *dashModel) tick() tea.Cmd {
 	return tea.Tick(time.Second*2, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
 
-func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
 		cmd  tea.Cmd
 		cmds []tea.Cmd
 	)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -552,12 +555,17 @@ func (m *dashModel) refreshData() {
 	}
 	tasks, err := m.db.ListTasksByStatus("")
 	if err == nil {
+		order := map[string]int{"started": 0, "scouted": 1, "building": 2, "review": 3, "pending": 4, "complete": 5}
 		sort.Slice(tasks, func(i, j int) bool {
-			order := map[string]int{"started": 0, "scouted": 1, "building": 2, "review": 3, "pending": 4, "complete": 5}
-			return order[tasks[i].Status] < order[tasks[j].Status]
+			orderI := order[tasks[i].Status]
+			orderJ := order[tasks[j].Status]
+			if orderI == orderJ {
+				return tasks[i].ID < tasks[j].ID
+			}
+			return orderI < orderJ
 		})
 
-		var items []list.Item
+		items := make([]list.Item, 0, len(tasks))
 		for _, t := range tasks {
 			items = append(items, taskItem{t})
 		}
@@ -750,15 +758,21 @@ func (m *dashModel) cleanupProjectSessions() {
 		}
 	}
 
-	// Log the cleanup
-	if killedCount > 0 {
+	// Log the cleanup (only if db is available)
+	if killedCount > 0 && m.db != nil {
 		m.db.RecordEvent("dashboard", "cleanup", fmt.Sprintf("Killed %d project sessions on exit", killedCount))
 	}
 }
 
-func (m dashModel) View() string {
+func (m *dashModel) View() string {
 	if !m.ready {
 		return "\n  Initializing Dashboard..."
+	}
+
+	// Guard against invalid dimensions
+	if m.width <= 0 || m.height <= 0 {
+		m.width = 80
+		m.height = 24
 	}
 
 	// Show quit confirmation dialog
