@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -87,6 +88,7 @@ func (d *DB) AddTaskWithPriority(title, description, targetFiles string, priorit
 	if err != nil {
 		return 0, fmt.Errorf("failed to get last insert id: %w", err)
 	}
+	d.InvalidateTaskCache()
 	return id, nil
 }
 
@@ -113,6 +115,7 @@ func (d *DB) UpdateTaskStatus(taskID int, status string) error {
 	if rows == 0 {
 		return fmt.Errorf("task not found: %d", taskID)
 	}
+	d.InvalidateTaskCache()
 	return nil
 }
 
@@ -224,6 +227,96 @@ func (d *DB) ListTasksByPriority(priority int) ([]Task, error) {
 	}, priority)
 }
 
+// ListTasksByStatuses retrieves all tasks matching any of the given statuses.
+// This is more efficient than making multiple calls to ListTasksByStatus.
+func (d *DB) ListTasksByStatuses(statuses []string) ([]Task, error) {
+	if len(statuses) == 0 {
+		return []Task{}, nil
+	}
+
+	placeholders := make([]string, len(statuses))
+	args := make([]interface{}, len(statuses))
+	for i, status := range statuses {
+		placeholders[i] = "?"
+		args[i] = status
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, parent_id, title, description, target_files, status, priority, created_at, updated_at
+		FROM tasks
+		WHERE status IN (%s)
+		ORDER BY priority ASC, id ASC
+	`, strings.Join(placeholders, ","))
+
+	return queryList(d, query, func(rows *sql.Rows) (Task, error) {
+		var t Task
+		var targetFiles sql.NullString
+		var parentID sql.NullInt64
+		err := rows.Scan(&t.ID, &parentID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
+		if parentID.Valid {
+			t.ParentID = int(parentID.Int64)
+		}
+		if targetFiles.Valid {
+			t.TargetFiles = targetFiles.String
+		}
+		return t, err
+	}, args...)
+}
+
+// GetPendingTasks retrieves all tasks with 'pending' status, ordered by priority.
+// This is a convenience method that wraps ListTasksByStatuses with a single status.
+func (d *DB) GetPendingTasks() ([]Task, error) {
+	return d.ListTasksByStatuses([]string{TaskStatusPending})
+}
+
+var taskCache = getDefaultTaskCache()
+
+func (d *DB) GetPendingTasksCached() ([]Task, error) {
+	cacheKey := "pending_tasks"
+	if tasks, found := taskCache.Get(cacheKey); found {
+		return tasks, nil
+	}
+	tasks, err := d.ListTasksByStatuses([]string{TaskStatusPending})
+	if err == nil && len(tasks) > 0 {
+		taskCache.Set(cacheKey, tasks)
+	}
+	return tasks, err
+}
+
+func (d *DB) GetTasksForSpawning(limit int) ([]Task, error) {
+	cacheKey := "spawning_tasks"
+	if limit <= 0 {
+		limit = 10
+	}
+	if tasks, found := taskCache.Get(cacheKey); found && len(tasks) <= limit {
+		return tasks, nil
+	}
+	query := `
+		SELECT id, parent_id, title, description, target_files, status, priority, created_at, updated_at
+		FROM tasks
+		WHERE status = ?
+		ORDER BY priority ASC, id ASC
+		LIMIT ?
+	`
+	return queryList(d, query, func(rows *sql.Rows) (Task, error) {
+		var t Task
+		var targetFiles sql.NullString
+		var parentID sql.NullInt64
+		err := rows.Scan(&t.ID, &parentID, &t.Title, &t.Description, &targetFiles, &t.Status, &t.Priority, &t.CreatedAt, &t.UpdatedAt)
+		if parentID.Valid {
+			t.ParentID = int(parentID.Int64)
+		}
+		if targetFiles.Valid {
+			t.TargetFiles = targetFiles.String
+		}
+		return t, err
+	}, TaskStatusPending, limit)
+}
+
+func (d *DB) InvalidateTaskCache() {
+	taskCache.InvalidateAll()
+}
+
 // ListSubTasks retrieves all tasks that are children of the given parent ID
 func (d *DB) ListSubTasks(parentID int) ([]Task, error) {
 	query := `
@@ -268,6 +361,6 @@ func (d *DB) RemoveTask(taskID int) error {
 	if rows == 0 {
 		return fmt.Errorf("task not found: %d", taskID)
 	}
+	d.InvalidateTaskCache()
 	return nil
 }
-
