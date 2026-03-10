@@ -41,7 +41,27 @@ Traditional AI coding assistants work in isolation. Dwight brings a whole team t
 ### 🔄 Intelligent Coordination
 - **Dual-Coordinator Model**: Infrastructure coordinator + AI supervisor
 - **Mailbox Protocol**: Async agent communication via typed messages
-- **MCP Integration**: Native Model Context Protocol support for external AI tools
+- **MCP Integration**: Native Model Context Protocol support for external AI tools (Gemini, OpenCode)
+
+### OpenCode Integration
+
+Dwight integrates with [OpenCode](https://opencode.ai) to provide autonomous Builder agents. OpenCode agents execute tasks within isolated Git worktrees, implementing features and fixes independently.
+
+**How it works:**
+- The Coordinator spawns OpenCode Builder agents via MCP
+- Each Builder receives a task specification and works in its own worktree
+- Agents communicate progress via the SQLite mailbox system
+- Watchdogs monitor agent health and intervene if needed
+
+**Configuration:**
+```yaml
+agents:
+  builder:
+    provider: opencode  # Use OpenCode for builder agents
+    model: minimax-m2.5
+```
+
+OpenCode agents follow the same autonomy protocol as other Dwight agents—reading mail, executing tasks, and reporting completion through the coordinated mailbox system.
 
 ### 📊 Code Intelligence
 - **Static Analysis**: Symbol indexing using Go's parser
@@ -121,7 +141,8 @@ Opens the live TUI dashboard to watch agents in action.
 │                         Coordinator                              │
 │  ┌─────────────────┐              ┌─────────────────────────┐  │
 │  │  Infrastructure │              │    AI Supervisor        │  │
-│  │  (Go Server)    │◄─────────────►│    (Gemini via MCP)     │  │
+│  │  (Go Server)    │◄─────────────►│    (Gemini/OpenCode)    │  │
+│  │                 │               │       via MCP           │  │
 │  └────────┬────────┘              └───────────┬─────────────┘  │
 │           │                                      │                │
 │           │         ┌──────────────────┐         │                │
