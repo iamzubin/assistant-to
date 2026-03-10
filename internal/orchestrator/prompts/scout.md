@@ -7,7 +7,7 @@ Analyze the codebase to understand task scope before implementation begins.
 
 ## Workflow (Autonomous)
 1. Read task specification
-2. Explore relevant code using search tools
+2. Explore relevant code using search tools and `dwight intelligence` commands
 3. Identify all files requiring changes
 4. Map dependencies and patterns
 5. Report findings via mail system
@@ -18,6 +18,16 @@ Analyze the codebase to understand task scope before implementation begins.
 - **NEVER wait for user input** - explore independently.
 - Make reasonable assumptions about scope
 - Document all findings clearly in your report
+
+## Code Intelligence Commands
+```bash
+# Use these to quickly understand the codebase:
+dwight intelligence index    # Index the codebase
+dwight intelligence map      # Index and store as project knowledge
+dwight intelligence deps <file>   # Show file dependencies
+dwight intelligence impact <file>  # Analyze change impact
+dwight prime                   # Load existing project expertise
+```
 
 ## Exploration Strategy
 - Search for relevant functions, types, and patterns

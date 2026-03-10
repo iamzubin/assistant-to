@@ -384,6 +384,71 @@ func (ci *CodeIndex) GetFileInfo(filePath string) (*File, error) {
 	return &file, nil
 }
 
+// GetAllPackages retrieves all packages from the index
+func (ci *CodeIndex) GetAllPackages() ([]Package, error) {
+	query := `
+		SELECT path, name FROM packages ORDER BY path ASC
+	`
+	rows, err := ci.DB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var packages []Package
+	for rows.Next() {
+		var pkg Package
+		if err := rows.Scan(&pkg.Path, &pkg.Name); err != nil {
+			return nil, err
+		}
+		packages = append(packages, pkg)
+	}
+
+	for i := range packages {
+		expRows, err := ci.DB.Query(
+			"SELECT name FROM functions WHERE file_id IN (SELECT id FROM files WHERE package_id = (SELECT id FROM packages WHERE path = ?)) AND receiver = ''",
+			packages[i].Path,
+		)
+		if err == nil {
+			defer expRows.Close()
+			for expRows.Next() {
+				var name string
+				if err := expRows.Scan(&name); err == nil {
+					packages[i].Exported = append(packages[i].Exported, name)
+				}
+			}
+		}
+	}
+
+	return packages, nil
+}
+
+// GetPackageFiles retrieves all file paths for a given package
+func (ci *CodeIndex) GetPackageFiles(pkgPath string) ([]string, error) {
+	query := `
+		SELECT f.path FROM files f
+		JOIN packages p ON f.package_id = p.id
+		WHERE p.path = ?
+		ORDER BY f.path ASC
+	`
+	rows, err := ci.DB.Query(query, pkgPath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []string
+	for rows.Next() {
+		var f string
+		if err := rows.Scan(&f); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+
+	return files, nil
+}
+
 // Close closes the database connection
 func (ci *CodeIndex) Close() error {
 	return ci.DB.Close()
