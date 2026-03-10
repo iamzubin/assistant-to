@@ -5,7 +5,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -97,6 +100,41 @@ type APIConfig struct {
 	MCPPort    int    `yaml:"mcpPort"`
 }
 
+// OpenCodeAgent represents a custom OpenCode agent definition
+type OpenCodeAgent struct {
+	Name         string   `yaml:"name"`         // Agent name (filename without .md)
+	Description  string   `yaml:"description"`  // Agent description
+	Mode         string   `yaml:"mode"`         // "primary" or "subagent"
+	Model        string   `yaml:"model"`        // Model to use
+	Temperature  float64  `yaml:"temperature"`  // Temperature setting
+	AllowedTools []string `yaml:"allowedTools"` // Tools permissions
+	Instructions string   `yaml:"instructions"` // Agent instructions (markdown content)
+	FilePath     string   `yaml:"filePath"`     // Source file path
+	Scope        string   `yaml:"scope"`        // "project" or "global"
+}
+
+// GeminiSkill represents a Gemini skill definition
+type GeminiSkill struct {
+	Name        string `yaml:"name"`        // Skill name (directory name)
+	Description string `yaml:"description"` // Skill description
+	Path        string `yaml:"path"`        // Path to skill directory
+	Scope       string `yaml:"scope"`       // "project" or "global"
+}
+
+// CustomAgentsConfig holds settings for custom OpenCode agents
+type CustomAgentsConfig struct {
+	Enabled    bool `yaml:"enabled"`    // Enable custom agents
+	PerProject bool `yaml:"perProject"` // Enable per-project agents (.opencode/agents/)
+	Global     bool `yaml:"global"`     // Enable global agents (~/.config/opencode/agents/)
+}
+
+// GeminiSkillsConfig holds settings for Gemini skills
+type GeminiSkillsConfig struct {
+	Enabled    bool `yaml:"enabled"`    // Enable Gemini skills
+	PerProject bool `yaml:"perProject"` // Enable per-project skills (.gemini/skills/)
+	Global     bool `yaml:"global"`     // Enable global skills (~/.gemini/skills/)
+}
+
 // GetProjectPorts returns project-specific ports based on the project path hash.
 // This ensures multiple instances can run on the same machine without port conflicts.
 func (c *Config) GetProjectPorts(projectPath string) (apiPort, mcpPort int) {
@@ -123,22 +161,24 @@ func (c *Config) GetProjectPorts(projectPath string) (apiPort, mcpPort int) {
 
 // Config represents the user's project-level configuration.
 type Config struct {
-	Tool        string                        `yaml:"tool"`
-	ModelLarge  string                        `yaml:"model_large"`
-	ModelMedium string                        `yaml:"model_medium"`
-	ModelFast   string                        `yaml:"model_fast"`
-	LastModel   string                        `yaml:"last_model"`
-	Project     ProjectConfig                 `yaml:"project"`
-	Agents      AgentsConfig                  `yaml:"agents"`
-	Worktrees   WorktreesConfig               `yaml:"worktrees"`
-	TaskTracker TaskTrackerConfig             `yaml:"taskTracker"`
-	Mulch       MulchConfig                   `yaml:"mulch"`
-	Merge       MergeConfig                   `yaml:"merge"`
-	Watchdog    WatchdogConfig                `yaml:"watchdog"`
-	Cleanup     CleanupConfig                 `yaml:"cleanup"`
-	Logging     LoggingConfig                 `yaml:"logging"`
-	API         APIConfig                     `yaml:"api"`
-	AgentsRT    map[string]AgentRuntimeConfig `yaml:"agentsRuntime"` // Per-agent runtime config: coordinator, builder, scout, reviewer, merger
+	Tool         string                        `yaml:"tool"`
+	ModelLarge   string                        `yaml:"model_large"`
+	ModelMedium  string                        `yaml:"model_medium"`
+	ModelFast    string                        `yaml:"model_fast"`
+	LastModel    string                        `yaml:"last_model"`
+	Project      ProjectConfig                 `yaml:"project"`
+	Agents       AgentsConfig                  `yaml:"agents"`
+	Worktrees    WorktreesConfig               `yaml:"worktrees"`
+	TaskTracker  TaskTrackerConfig             `yaml:"taskTracker"`
+	Mulch        MulchConfig                   `yaml:"mulch"`
+	Merge        MergeConfig                   `yaml:"merge"`
+	Watchdog     WatchdogConfig                `yaml:"watchdog"`
+	Cleanup      CleanupConfig                 `yaml:"cleanup"`
+	Logging      LoggingConfig                 `yaml:"logging"`
+	API          APIConfig                     `yaml:"api"`
+	AgentsRT     map[string]AgentRuntimeConfig `yaml:"agentsRuntime"` // Per-agent runtime config: coordinator, builder, scout, reviewer, merger
+	CustomAgents CustomAgentsConfig            `yaml:"customAgents"`  // Custom OpenCode agents settings
+	GeminiSkills GeminiSkillsConfig            `yaml:"geminiSkills"`  // Gemini skills settings
 }
 
 // Default returns a default configuration object.
@@ -249,6 +289,16 @@ func Default() *Config {
 				AllowedTools: []string{"mail", "log", "buffer"},
 				MCPPort:      0,
 			},
+		},
+		CustomAgents: CustomAgentsConfig{
+			Enabled:    true,
+			PerProject: true,
+			Global:     true,
+		},
+		GeminiSkills: GeminiSkillsConfig{
+			Enabled:    true,
+			PerProject: true,
+			Global:     true,
 		},
 	}
 }
@@ -500,4 +550,180 @@ func (c *Config) Save(path string) error {
 	}
 
 	return nil
+}
+
+func GetHomeDir() string {
+	usr, err := user.Current()
+	if err != nil {
+		return os.Getenv("HOME")
+	}
+	return usr.HomeDir
+}
+
+func parseAgentFile(path string) (*OpenCodeAgent, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	agent := &OpenCodeAgent{
+		Name:         strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
+		FilePath:     path,
+		Instructions: string(content),
+		Mode:         "subagent",
+	}
+
+	lines := strings.Split(string(content), "\n")
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "description:") {
+			agent.Description = strings.TrimSpace(strings.TrimPrefix(line, "description:"))
+		} else if strings.HasPrefix(line, "mode:") {
+			agent.Mode = strings.TrimSpace(strings.TrimPrefix(line, "mode:"))
+		} else if strings.HasPrefix(line, "model:") {
+			agent.Model = strings.TrimSpace(strings.TrimPrefix(line, "model:"))
+		} else if strings.HasPrefix(line, "temperature:") {
+			tempStr := strings.TrimSpace(strings.TrimPrefix(line, "temperature:"))
+			if temp, err := strconv.ParseFloat(tempStr, 64); err == nil {
+				agent.Temperature = temp
+			}
+		} else if strings.HasPrefix(line, "tools:") {
+			toolsStr := strings.TrimSpace(strings.TrimPrefix(line, "tools:"))
+			agent.AllowedTools = strings.Split(toolsStr, ",")
+			for j := range agent.AllowedTools {
+				agent.AllowedTools[j] = strings.TrimSpace(agent.AllowedTools[j])
+			}
+		}
+		if i > 10 {
+			break
+		}
+	}
+
+	return agent, nil
+}
+
+func parseSkillDir(path string) (*GeminiSkill, error) {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return nil, err
+	}
+
+	skill := &GeminiSkill{
+		Name: filepath.Base(path),
+		Path: path,
+	}
+
+	descriptionPath := filepath.Join(path, "description.md")
+	if data, err := os.ReadFile(descriptionPath); err == nil {
+		content := string(data)
+		lines := strings.Split(content, "\n")
+		if len(lines) > 0 {
+			firstLine := strings.TrimSpace(lines[0])
+			if len(firstLine) > 0 && len(firstLine) < 200 {
+				skill.Description = firstLine
+			}
+		}
+	}
+
+	return skill, nil
+}
+
+func (c *Config) IsCustomAgentsEnabled() bool {
+	return c.CustomAgents.Enabled
+}
+
+func (c *Config) IsCustomAgentsPerProject() bool {
+	return c.CustomAgents.Enabled && c.CustomAgents.PerProject
+}
+
+func (c *Config) IsCustomAgentsGlobal() bool {
+	return c.CustomAgents.Enabled && c.CustomAgents.Global
+}
+
+func (c *Config) IsGeminiSkillsEnabled() bool {
+	return c.GeminiSkills.Enabled
+}
+
+func (c *Config) IsGeminiSkillsPerProject() bool {
+	return c.GeminiSkills.Enabled && c.GeminiSkills.PerProject
+}
+
+func (c *Config) IsGeminiSkillsGlobal() bool {
+	return c.GeminiSkills.Enabled && c.GeminiSkills.Global
+}
+
+func (c *Config) DiscoverOpenCodeAgents(projectRoot string) []OpenCodeAgent {
+	var agents []OpenCodeAgent
+
+	if c.IsCustomAgentsPerProject() {
+		projectAgentsPath := filepath.Join(projectRoot, ".opencode", "agents")
+		if entries, err := os.ReadDir(projectAgentsPath); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+					continue
+				}
+				agentPath := filepath.Join(projectAgentsPath, entry.Name())
+				if agent, err := parseAgentFile(agentPath); err == nil {
+					agent.Scope = "project"
+					agents = append(agents, *agent)
+				}
+			}
+		}
+	}
+
+	if c.IsCustomAgentsGlobal() {
+		globalAgentsPath := filepath.Join(GetHomeDir(), ".config", "opencode", "agents")
+		if entries, err := os.ReadDir(globalAgentsPath); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+					continue
+				}
+				agentPath := filepath.Join(globalAgentsPath, entry.Name())
+				if agent, err := parseAgentFile(agentPath); err == nil {
+					agent.Scope = "global"
+					agents = append(agents, *agent)
+				}
+			}
+		}
+	}
+
+	return agents
+}
+
+func (c *Config) DiscoverGeminiSkills(projectRoot string) []GeminiSkill {
+	var skills []GeminiSkill
+
+	if c.IsGeminiSkillsPerProject() {
+		projectSkillsPath := filepath.Join(projectRoot, ".gemini", "skills")
+		if entries, err := os.ReadDir(projectSkillsPath); err == nil {
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					continue
+				}
+				skillPath := filepath.Join(projectSkillsPath, entry.Name())
+				if skill, err := parseSkillDir(skillPath); err == nil {
+					skill.Scope = "project"
+					skills = append(skills, *skill)
+				}
+			}
+		}
+	}
+
+	if c.IsGeminiSkillsGlobal() {
+		globalSkillsPath := filepath.Join(GetHomeDir(), ".gemini", "skills")
+		if entries, err := os.ReadDir(globalSkillsPath); err == nil {
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					continue
+				}
+				skillPath := filepath.Join(globalSkillsPath, entry.Name())
+				if skill, err := parseSkillDir(skillPath); err == nil {
+					skill.Scope = "global"
+					skills = append(skills, *skill)
+				}
+			}
+		}
+	}
+
+	return skills
 }

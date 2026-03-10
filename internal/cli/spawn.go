@@ -22,6 +22,8 @@ var (
 	spawnRole   string
 	spawnPrompt string
 	spawnTool   string
+	spawnAgent  string
+	spawnSkill  string
 )
 
 var runCmd = &cobra.Command{
@@ -117,31 +119,86 @@ var runCmd = &cobra.Command{
 		}
 		sessionName := sandbox.ProjectPrefix(pwd) + suffix
 
+		// Discover custom OpenCode agents if enabled
+		var customAgents []config.OpenCodeAgent
+		if conf.IsCustomAgentsEnabled() {
+			customAgents = conf.DiscoverOpenCodeAgents(pwd)
+			if len(customAgents) > 0 {
+				fmt.Printf("Discovered %d custom OpenCode agent(s)\n", len(customAgents))
+				for _, agent := range customAgents {
+					fmt.Printf("  - %s (%s, %s)\n", agent.Name, agent.Mode, agent.Scope)
+				}
+			}
+		}
+
+		// Discover Gemini skills if enabled
+		var customSkills []config.GeminiSkill
+		if conf.IsGeminiSkillsEnabled() {
+			customSkills = conf.DiscoverGeminiSkills(pwd)
+			if len(customSkills) > 0 {
+				fmt.Printf("Discovered %d Gemini skill(s)\n", len(customSkills))
+				for _, skill := range customSkills {
+					fmt.Printf("  - %s (%s)\n", skill.Name, skill.Scope)
+				}
+			}
+		}
+
 		// Load prompt from agents.md if not provided
 		finalPrompt := spawnPrompt
 		if finalPrompt == "" {
-			// Look for prompts directory
-			promptsPath := filepath.Join(pwd, ".dwight", "prompts")
-			if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
-				promptsPath = filepath.Join(pwd, "internal", "orchestrator", "prompts")
+			// Check if a custom agent was specified
+			if spawnAgent != "" {
+				for _, agent := range customAgents {
+					if agent.Name == spawnAgent {
+						finalPrompt = agent.Instructions
+						fmt.Printf("Using custom agent: %s\n", agent.Name)
+						// Override model if specified in agent
+						if agent.Model != "" && (spawnModel == "" || spawnModel == "auto") {
+							spawnModel = agent.Model
+							fmt.Printf("  Using agent model: %s\n", agent.Model)
+						}
+						break
+					}
+				}
 			}
-			prompts, err := tasking.LoadPrompts(promptsPath)
-			if err == nil {
-				finalPrompt = prompts.Get(role)
-				if finalPrompt == "" {
-					fmt.Printf("Warning: no prompt found for role %q\n", role)
-				}
 
-				// Inject MCP documentation for ALL roles that have it
-				mcpContent := prompts.GetMCP(mcpRole)
-				if mcpContent != "" {
-					mcpContent = strings.ReplaceAll(mcpContent, "{{.MCPPort}}", fmt.Sprintf("%d", mcpPort))
-					mcpContent = strings.ReplaceAll(mcpContent, "{{.APIPort}}", fmt.Sprintf("%d", apiPort))
-					mcpContent = strings.ReplaceAll(mcpContent, "{{.TaskID}}", taskID)
-					finalPrompt = finalPrompt + "\n\n" + mcpContent
+			// If no custom agent or still no prompt, fall back to standard prompts
+			if finalPrompt == "" {
+				// Look for prompts directory
+				promptsPath := filepath.Join(pwd, ".dwight", "prompts")
+				if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
+					promptsPath = filepath.Join(pwd, "internal", "orchestrator", "prompts")
 				}
-			} else {
-				fmt.Printf("Warning: failed to load prompts: %v\n", err)
+				prompts, err := tasking.LoadPrompts(promptsPath)
+				if err == nil {
+					finalPrompt = prompts.Get(role)
+					if finalPrompt == "" {
+						fmt.Printf("Warning: no prompt found for role %q\n", role)
+					}
+
+					// Inject MCP documentation for ALL roles that have it
+					mcpContent := prompts.GetMCP(mcpRole)
+					if mcpContent != "" {
+						mcpContent = strings.ReplaceAll(mcpContent, "{{.MCPPort}}", fmt.Sprintf("%d", mcpPort))
+						mcpContent = strings.ReplaceAll(mcpContent, "{{.APIPort}}", fmt.Sprintf("%d", apiPort))
+						mcpContent = strings.ReplaceAll(mcpContent, "{{.TaskID}}", taskID)
+						finalPrompt = finalPrompt + "\n\n" + mcpContent
+					}
+				} else {
+					fmt.Printf("Warning: failed to load prompts: %v\n", err)
+				}
+			}
+		}
+
+		// Check if a custom skill was specified
+		if spawnSkill != "" {
+			for _, skill := range customSkills {
+				if skill.Name == spawnSkill {
+					fmt.Printf("Using Gemini skill: %s\n", skill.Name)
+					// Skills are linked via gemini CLI, so we need to ensure they're linked
+					// For now, we just note which skill is being used
+					break
+				}
 			}
 		}
 
@@ -372,12 +429,156 @@ Target can be a task ID (e.g., 1) or a full agent ID (e.g., builder-1).`,
 	},
 }
 
+var listAgentsCmd = &cobra.Command{
+	Use:   "agents",
+	Short: "List available custom OpenCode agents",
+	Long:  `Discovers and lists custom OpenCode agents from per-project and global locations.`,
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		pwd, err := findProjectRoot()
+		if err != nil {
+			fmt.Printf("Failed to find project root: %v\n", err)
+			os.Exit(1)
+		}
+
+		configPath := filepath.Join(pwd, ".dwight", "config.yaml")
+		conf, err := config.Load(configPath)
+		if err != nil {
+			fmt.Printf("Warning: failed to load workspace config, using defaults.\n")
+			conf = config.Default()
+		}
+
+		if !conf.IsCustomAgentsEnabled() {
+			fmt.Println("Custom OpenCode agents are disabled in config.")
+			return
+		}
+
+		agents := conf.DiscoverOpenCodeAgents(pwd)
+		if len(agents) == 0 {
+			fmt.Println("No custom OpenCode agents found.")
+			fmt.Println("Place .md files in:")
+			fmt.Printf("  - Per-project: %s\n", filepath.Join(pwd, ".opencode", "agents"))
+			fmt.Printf("  - Global: %s\n", filepath.Join(config.GetHomeDir(), ".config", "opencode", "agents"))
+			return
+		}
+
+		fmt.Println("Available OpenCode Agents:")
+		for _, agent := range agents {
+			fmt.Printf("  %s (%s)\n", agent.Name, agent.Scope)
+			if agent.Description != "" {
+				fmt.Printf("    Description: %s\n", agent.Description)
+			}
+			if agent.Mode != "" {
+				fmt.Printf("    Mode: %s\n", agent.Mode)
+			}
+			if agent.Model != "" {
+				fmt.Printf("    Model: %s\n", agent.Model)
+			}
+		}
+	},
+}
+
+var listSkillsCmd = &cobra.Command{
+	Use:   "skills",
+	Short: "List available Gemini skills",
+	Long:  `Discovers and lists Gemini skills from per-project and global locations.`,
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		pwd, err := findProjectRoot()
+		if err != nil {
+			fmt.Printf("Failed to find project root: %v\n", err)
+			os.Exit(1)
+		}
+
+		configPath := filepath.Join(pwd, ".dwight", "config.yaml")
+		conf, err := config.Load(configPath)
+		if err != nil {
+			fmt.Printf("Warning: failed to load workspace config, using defaults.\n")
+			conf = config.Default()
+		}
+
+		if !conf.IsGeminiSkillsEnabled() {
+			fmt.Println("Gemini skills are disabled in config.")
+			return
+		}
+
+		skills := conf.DiscoverGeminiSkills(pwd)
+		if len(skills) == 0 {
+			fmt.Println("No Gemini skills found.")
+			fmt.Println("Place skill directories in:")
+			fmt.Printf("  - Per-project: %s\n", filepath.Join(pwd, ".gemini", "skills"))
+			fmt.Printf("  - Global: %s\n", filepath.Join(config.GetHomeDir(), ".gemini", "skills"))
+			return
+		}
+
+		fmt.Println("Available Gemini Skills:")
+		for _, skill := range skills {
+			fmt.Printf("  %s (%s)\n", skill.Name, skill.Scope)
+			if skill.Description != "" {
+				fmt.Printf("    Description: %s\n", skill.Description)
+			}
+		}
+	},
+}
+
+var listCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List available agents and skills",
+	Long:  `Discovers and lists custom OpenCode agents and Gemini skills.`,
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		pwd, err := findProjectRoot()
+		if err != nil {
+			fmt.Printf("Failed to find project root: %v\n", err)
+			os.Exit(1)
+		}
+
+		configPath := filepath.Join(pwd, ".dwight", "config.yaml")
+		conf, err := config.Load(configPath)
+		if err != nil {
+			fmt.Printf("Warning: failed to load workspace config, using defaults.\n")
+			conf = config.Default()
+		}
+
+		fmt.Println("=== OpenCode Agents ===")
+		if conf.IsCustomAgentsEnabled() {
+			agents := conf.DiscoverOpenCodeAgents(pwd)
+			if len(agents) == 0 {
+				fmt.Println("  No custom agents found.")
+			}
+			for _, agent := range agents {
+				fmt.Printf("  %s (%s)\n", agent.Name, agent.Scope)
+			}
+		} else {
+			fmt.Println("  Disabled")
+		}
+
+		fmt.Println("\n=== Gemini Skills ===")
+		if conf.IsGeminiSkillsEnabled() {
+			skills := conf.DiscoverGeminiSkills(pwd)
+			if len(skills) == 0 {
+				fmt.Println("  No skills found.")
+			}
+			for _, skill := range skills {
+				fmt.Printf("  %s (%s)\n", skill.Name, skill.Scope)
+			}
+		} else {
+			fmt.Println("  Disabled")
+		}
+	},
+}
+
 func init() {
 	runCmd.Flags().StringVarP(&spawnModel, "model", "m", "", "Model for the agent to use (set to 'auto' to use last used model)")
 	runCmd.Flags().StringVarP(&spawnRole, "role", "r", "Builder", "Role of the agent (e.g., Builder, Reviewer)")
 	runCmd.Flags().StringVarP(&spawnPrompt, "prompt", "p", "", "Initial prompt or context for the agent")
 	runCmd.Flags().StringVarP(&spawnTool, "tool", "t", "", "Runtime tool to use (gemini, opencode) - defaults to config or role setting")
+	runCmd.Flags().StringVarP(&spawnAgent, "agent", "a", "", "Custom OpenCode agent to use (discovered from .opencode/agents or ~/.config/opencode/agents)")
+	runCmd.Flags().StringVarP(&spawnSkill, "skill", "s", "", "Gemini skill to use (discovered from .gemini/skills or ~/.gemini/skills)")
 
 	RootCmd.AddCommand(runCmd)
 	RootCmd.AddCommand(connectCmd)
+	RootCmd.AddCommand(listCmd)
+	listCmd.AddCommand(listAgentsCmd)
+	listCmd.AddCommand(listSkillsCmd)
 }
