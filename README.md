@@ -1,89 +1,235 @@
-# dwight
+# Dwight
 
-**The Managing Director's Autonomous Coding Swarm**
+<p align="center">
+  <strong>The Managing Director's Autonomous Coding Swarm</strong><br>
+  A multi-agent orchestrator for autonomous software development
+</p>
 
-`dwight` is a multi-agent orchestrator built in Go. It allows you to manage tasks using a swarm of autonomous agents that communicate via a local SQLite mailbox, work in isolated Git worktrees, and are supervised by a coordinator.
+<p align="center">
+  <a href="https://github.com/iamzubin/dwight/releases">
+    <img src="https://img.shields.io/github/v/release/iamzubin/dwight?include_prereleases&style=flat-square" alt="Release">
+  </a>
+  <a href="https://pkg.go.dev/dwight">
+    <img src="https://img.shields.io/badge/Go-Reference-00ADD8?style=flat-square&logo=go" alt="Go Reference">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/github/license/iamzubin/dwight?style=flat-square" alt="License">
+  </a>
+</p>
 
-## 📋 Prerequisites
+---
 
-Before installing, ensure you have the following available:
-- **Go**: 1.25+
-- **tmux**: Used for process sandboxing.
-- **git**: Required for repository management and worktree isolation.
+Dwight is a multi-agent orchestrator that manages a swarm of autonomous AI coding agents. It provides complete task isolation using Git worktrees, coordinated communication via a SQLite mailbox, and intelligent supervision through tiered watchdogs.
 
-## 📦 Installation
+## Why Dwight?
 
-To install `dwight` globally:
+Traditional AI coding assistants work in isolation. Dwight brings a whole team to your codebase:
+
+- **Parallel Development**: Multiple agents work simultaneously on different tasks
+- **Complete Isolation**: Each task runs in its own Git worktree—no merge conflicts, no side effects
+- **Self-Healing**: Watchdogs detect stuck agents and automatically intervene
+- **Knowledge Sharing**: Agents learn from each other via a shared expertise database
+
+## Features
+
+### 🤖 Specialized Agent Roles
+- **Scout**: Explores the codebase, identifies dependencies, maps relationships
+- **Builder**: Implements features and fixes in isolated worktrees
+- **Merger**: Handles branch integration with a 4-tier conflict resolution strategy
+- **Watchdog**: Monitors health, detects hangs, manages timeouts
+
+### 🔄 Intelligent Coordination
+- **Dual-Coordinator Model**: Infrastructure coordinator + AI supervisor
+- **Mailbox Protocol**: Async agent communication via typed messages
+- **MCP Integration**: Native Model Context Protocol support for external AI tools
+
+### 📊 Code Intelligence
+- **Static Analysis**: Symbol indexing using Go's parser
+- **Dependency Graph**: Maps files, packages, and type relationships
+- **Impact Analysis**: Traces ripple effects of proposed changes
+
+### 🛡️ Safe Execution
+- **Git Worktrees**: Filesystem isolation per task
+- **Tmux Sandboxing**: Process isolation with live monitoring
+- **Deterministic Ports**: Conflict-free multi-project support
+
+## Installation
+
+### Prerequisites
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| Go   | 1.24+   | Runtime  |
+| tmux | Latest  | Process sandboxing |
+| git  | 2.30+   | Worktree management |
+
+### Quick Install
 
 ```bash
-go install ./cmd/dwight
+go install github.com/iamzubin/dwight/cmd/dwight@latest
 ```
 
-Make sure your `$GOPATH/bin` is in your `PATH`. You can then use the `dwight` command from any directory.
+Or build from source:
 
-Alternatively, to build locally:
 ```bash
+git clone https://github.com/iamzubin/dwight.git
+cd dwight
 go build -o dwight ./cmd/dwight
 ```
 
-## 🚀 Quick Start
+Ensure `$GOPATH/bin` (or `$HOME/go/bin`) is in your `PATH`.
+
+## Quick Start
 
 ### 1. Initialize a project
-Run this in the root of the git repository you want to manage.
 
 ```bash
+cd your-project
 dwight init
 ```
-This will create a `.dwight` directory with your configuration and state database.
+
+Creates `.dwight/` with configuration and SQLite state database.
 
 ### 2. Add a task
+
 ```bash
 dwight task add
 ```
-Follow the interactive form to define the task.
+
+Interactive form to define task title, description, and difficulty.
 
 ### 3. Start the swarm
+
 ```bash
 dwight start
 ```
-This wakes up the Coordinator to begin processing the task queue.
+
+Wakes up the Coordinator to begin processing the task queue.
 
 ### 4. Monitor progress
+
 ```bash
 dwight dash
 ```
-Opens the TUI dashboard to see your agents in action.
 
----
+Opens the live TUI dashboard to watch agents in action.
 
-## 🛠 Development
+## Architecture
 
-### Project Structure
-- `cmd/dwight/`: Entry point for the CLI.
-- `internal/`: Core logic, including orchestrator, prompts, and database management.
-- `SPEC.md`: Detailed architectural specification.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Coordinator                              │
+│  ┌─────────────────┐              ┌─────────────────────────┐  │
+│  │  Infrastructure │              │    AI Supervisor        │  │
+│  │  (Go Server)    │◄─────────────►│    (Gemini via MCP)     │  │
+│  └────────┬────────┘              └───────────┬─────────────┘  │
+│           │                                      │                │
+│           │         ┌──────────────────┐         │                │
+│           └────────►│   SQLite State   │◄────────┘                │
+│                    │  ┌──────────────┐  │                          │
+│                    │  │   Tasks DB   │  │                          │
+│                    │  │   Mailbox    │  │                          │
+│                    │  │   Events     │  │                          │
+│                    │  │   Expertise  │  │                          │
+│                    │  └──────────────┘  │                          │
+│                    └─────────────────────┘                          │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+        ┌────────────────────┼────────────────────┐
+        │                    │                    │
+        ▼                    ▼                    ▼
+┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+│     Scout     │    │    Builder    │    │    Merger     │
+│  (Read-only) │    │  (Implement)   │    │   (Merge)     │
+│              │    │                │    │               │
+│  - Explore   │    │  - Code        │    │  - Resolve    │
+│  - Analyze   │    │  - Test        │    │  - Rebase     │
+│  - Report    │    │  - Verify      │    │  - Integrate  │
+└──────┬───────┘    └───────┬────────┘    └───────┬────────┘
+       │                    │                    │
+       │         ┌──────────┴──────────┐         │
+       │         │   Git Worktree      │         │
+       │         │   (Isolated Branch) │         │
+       │         └─────────────────────┘         │
+       │                   │                      │
+       └───────────────────┼──────────────────────┘
+                           ▼
+                   ┌───────────────┐
+                   │     tmux      │
+                   │   Session     │
+                   │ (Sandbox)     │
+                   └───────────────┘
+```
 
-### Building
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `dwight init` | Interactive project setup |
+| `dwight task add` | Queue a new task |
+| `dwight start` | Start the Coordinator |
+| `dwight dash` | Open live TUI dashboard |
+| `dwight halt` | Kill all dwight-* tmux sessions |
+| `dwight task list` | List all tasks |
+| `dwight mail send` | Send a message to an agent |
+
+## Project Structure
+
+```
+dwight/
+├── cmd/dwight/           # CLI entry point
+├── internal/
+│   ├── api/              # MCP and HTTP servers
+│   ├── cli/              # Cobra commands
+│   ├── config/           # Configuration management
+│   ├── constants/        # Status codes, events
+│   ├── db/               # SQLite schema and queries
+│   ├── intelligence/    # Code analysis (Mulch)
+│   ├── merge/            # Conflict resolution
+│   ├── metrics/          # Token tracking
+│   ├── orchestrator/     # Coordinator and agents
+│   ├── sandbox/          # Worktree and tmux management
+│   ├── tasking/          # Prompt generation
+│   └── tui/              # Dashboard UI
+├── SPEC.md               # Detailed architecture spec
+└── README.md             # This file
+```
+
+## Configuration
+
+Dwight stores state in `.dwight/`:
+
+```
+.dwight/
+├── config.yaml       # Project configuration
+├── state.db          # SQLite database
+└── logs/             # Agent execution logs
+```
+
+## Development
+
 ```bash
+# Build
 go build -o dwight ./cmd/dwight
-```
 
-### Testing
-```bash
+# Test
 go test ./...
+
+# Run
+./dwight --help
 ```
 
+## Documentation
+
+- [SPEC.md](SPEC.md) — Detailed architecture and design decisions
+- [plan.md](plan.md) — Development roadmap
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
 ---
 
-## 📖 CLI Commands
-
-- `dwight init` - Interactive setup (via `huh`).
-- `dwight task add` - Interactive form to queue new work.
-- `dwight start` - Starts the Coordinator.
-- `dwight dash` - Opens the live TUI dashboard.
-- `dwight halt` - Instantly kills all `dwight-*` tmux sessions.
-
----
-
-## 🏛 Architecture
-Refer to [SPEC.md](SPEC.md) for a deep dive into the philosophy, state management, and agent roster.
+<p align="center">
+  Built with Go, tmux, and SQLite
+</p>
