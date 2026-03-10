@@ -309,11 +309,10 @@ func (w *Watchdog) executeEscalationAction(ctx context.Context, agentID string, 
 
 		w.DB.RecordEvent(sessionName, constants.EventTypeRecovery, fmt.Sprintf("Sending nudge to stalled agent (attempt %d)", state.attempts))
 
-		// Send escape keys to try to interrupt
-		escapeCount := w.Config.GetWatchdogEscapeKeyCount()
-		err := session.SendEscape(escapeCount)
+		// Send interrupt sequence (esc+esc+enter) to try to interrupt
+		err := session.SendInterruptSequence()
 		if err != nil {
-			config.Error("Watchdog: Failed to send escape keys to %s: %v", agentID, err)
+			config.Error("Watchdog: Failed to send interrupt sequence to %s: %v", agentID, err)
 		}
 
 		// Send mail to agent

@@ -130,6 +130,12 @@ func (t *TmuxSession) SendEscape(count int) error {
 	return t.SendKeys(keys...)
 }
 
+// SendInterruptSequence sends escape+escape+enter to interrupt the current process
+// This is the standard key sequence for interrupting CLI tools like gemini/opencode
+func (t *TmuxSession) SendInterruptSequence() error {
+	return t.SendKeys("Escape", "Escape", "C-m")
+}
+
 // SendCtrlC sends Ctrl+C to interrupt the current process
 func (t *TmuxSession) SendCtrlC() error {
 	return t.SendKeys("C-c")
