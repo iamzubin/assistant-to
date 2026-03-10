@@ -16,6 +16,7 @@ import (
 	"dwight/internal/api"
 	"dwight/internal/config"
 	"dwight/internal/db"
+	"dwight/internal/intelligence"
 	"dwight/internal/merge"
 	"dwight/internal/sandbox"
 	"dwight/internal/tasking"
@@ -449,8 +450,11 @@ func (c *Coordinator) spawnBuilder(ctx context.Context, task db.Task) error {
 		mcpContent = strings.ReplaceAll(mcpContent, "{{.TaskID}}", taskID)
 	}
 
-	taskPrompt := fmt.Sprintf("%s\n\n---\n\n## Your Task (ID: %d)\n\n**Title:** %s\n\n**Description:**\n%s\n\n**Target Files:**\n%s\n\n**Communication:**\n- API Server: http://127.0.0.1:%d\n- MCP Server: 127.0.0.1:%d\n%s\n\n%s",
-		rolePrompt, task.ID, task.Title, task.Description, task.TargetFiles, apiPort, mcpPort, toolDocs, mcpContent)
+	// Build intelligence context for the task
+	intelContext := c.buildIntelligenceContext(task.TargetFiles)
+
+	taskPrompt := fmt.Sprintf("%s\n\n---\n\n## Your Task (ID: %d)\n\n**Title:** %s\n\n**Description:**\n%s\n\n**Target Files:**\n%s\n\n%s\n\n**Communication:**\n- API Server: http://127.0.0.1:%d\n- MCP Server: 127.0.0.1:%d\n%s\n\n%s",
+		rolePrompt, task.ID, task.Title, task.Description, task.TargetFiles, intelContext, apiPort, mcpPort, toolDocs, mcpContent)
 
 	// Write prompt to a mission file in the worktree to avoid shell escaping issues
 	missionPath := filepath.Join(worktreeDir, ".mission.md")
@@ -1315,4 +1319,99 @@ func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID strin
 	}
 
 	return nil
+}
+
+// buildIntelligenceContext gathers code intelligence and expertise for the task
+func (c *Coordinator) buildIntelligenceContext(targetFiles string) string {
+	var ctx strings.Builder
+
+	if targetFiles == "" {
+		return ""
+	}
+
+	files := strings.Split(targetFiles, ",")
+	for i := range files {
+		files[i] = strings.TrimSpace(files[i])
+	}
+
+	// Load code intelligence from index
+	codeIndexPath := filepath.Join(c.PWD, ".dwight", "code-intelligence.db")
+	if _, err := os.Stat(codeIndexPath); err == nil {
+		idx, err := intelligence.NewCodeIndex(codeIndexPath)
+		if err == nil {
+			defer idx.Close()
+
+			var fileContext []string
+			for _, file := range files {
+				if file == "" {
+					continue
+				}
+				fileInfo, err := idx.GetFileInfo(file)
+				if err != nil {
+					continue
+				}
+
+				var fc strings.Builder
+				fc.WriteString(fmt.Sprintf("\n### %s\n", file))
+				fc.WriteString(fmt.Sprintf("- Package: %s\n", fileInfo.Package))
+
+				if len(fileInfo.Types) > 0 {
+					fc.WriteString(fmt.Sprintf("- Types: %s\n", strings.Join(fileInfo.Types, ", ")))
+				}
+				if len(fileInfo.Functions) > 0 {
+					fc.WriteString(fmt.Sprintf("- Functions: %s\n", strings.Join(fileInfo.Functions, ", ")))
+				}
+				for _, method := range fileInfo.Methods {
+					fc.WriteString(fmt.Sprintf("- Method: %s.%s\n", method.Receiver, method.Name))
+				}
+				if len(fileInfo.Imports) > 0 {
+					fc.WriteString(fmt.Sprintf("- Imports: %s\n", strings.Join(fileInfo.Imports, ", ")))
+				}
+				fileContext = append(fileContext, fc.String())
+			}
+
+			if len(fileContext) > 0 {
+				ctx.WriteString("\n## Code Intelligence Context\n")
+				ctx.WriteString("Based on code index:\n")
+				for _, fc := range fileContext {
+					ctx.WriteString(fc)
+				}
+			}
+		}
+	}
+
+	// Load expertise from database
+	dbPath := filepath.Join(c.PWD, ".dwight", "state.db")
+	database, err := db.Open(dbPath)
+	if err == nil {
+		defer database.Close()
+		if err := database.InitSchema(); err == nil {
+			var expertiseContext []string
+			for _, file := range files {
+				if file == "" {
+					continue
+				}
+				domain := filepath.Dir(file)
+				entries, err := database.SearchExpertise(domain)
+				if err != nil || len(entries) == 0 {
+					continue
+				}
+				for _, entry := range entries {
+					expertiseContext = append(expertiseContext,
+						fmt.Sprintf("- [%s] %s: %s", entry.Type, entry.Domain, entry.Description))
+				}
+			}
+
+			if len(expertiseContext) > 0 {
+				ctx.WriteString("\n## Relevant Project Expertise\n")
+				ctx.WriteString("Patterns and conventions to follow:\n")
+				for _, exp := range expertiseContext {
+					ctx.WriteString(exp)
+					ctx.WriteString("\n")
+				}
+			}
+		}
+	}
+
+	return ctx.String()
 }
