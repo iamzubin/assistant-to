@@ -22,6 +22,14 @@ type RecoveryState struct {
 	lastRecoveryTime   time.Time
 	recoveryInProgress bool
 	escalationSent     bool
+	escalationLevel    int
+	stalledSince       *time.Time
+}
+
+// Persistent capabilities that are excluded from stale/zombie detection
+var PersistentCapabilities = map[string]bool{
+	"coordinator": true,
+	"monitor":     true,
 }
 
 // Watchdog monitors agent heartbeats and recovers stuck agents.
@@ -34,6 +42,15 @@ type Watchdog struct {
 	tier1        *Tier1Watchdog
 	tier1Enabled bool
 }
+
+// Escalation levels for progressive nudging (matching Overstory's Tier 0)
+const (
+	EscalationLevelWarn      = 0 // Log warning, no direct action
+	EscalationLevelNudge     = 1 // Send tmux nudge to agent
+	EscalationLevelEscalate  = 2 // Invoke Tier 1 AI triage
+	EscalationLevelTerminate = 3 // Kill tmux session
+	MaxEscalationLevel       = 3
+)
 
 // NewWatchdog creates a new Watchdog with the given configuration
 func NewWatchdog(database *db.DB, pwd string, cfg *config.Config) *Watchdog {
@@ -97,6 +114,7 @@ func (w *Watchdog) MonitorHeartbeats(ctx context.Context, agentID string) {
 
 func (w *Watchdog) checkHeartbeat(ctx context.Context, agentID string) error {
 	stallTimeout := w.Config.GetWatchdogStallTimeout()
+	nudgeInterval := w.Config.GetWatchdogRecoveryWaitTime()
 
 	// Use a context with timeout for the heartbeat check
 	timeoutCtx, cancel := context.WithTimeout(ctx, stallTimeout+1*time.Minute)
@@ -108,31 +126,38 @@ func (w *Watchdog) checkHeartbeat(ctx context.Context, agentID string) error {
 	sessionName := prefix + taskID
 	session := &sandbox.TmuxSession{SessionName: sessionName}
 
-	// TIER 0: Mechanical Checks
-	// 1. Check if tmux session exists
-	if !session.HasSession() {
-		config.Info("Watchdog: Session %s no longer exists for agent %s", sessionName, agentID)
-		w.DB.RecordEvent(sessionName, constants.EventTypeSessionDead, "Tmux session no longer exists")
-		return nil
+	// Check if agent has persistent capability (coordinator/monitor)
+	isPersistent := w.isPersistentCapability(agentID)
+
+	// ZFC PRINCIPLE: Check observable state first (tmux, pid), then recorded state
+	// Observable state always wins over recorded state
+
+	// 1. Check if tmux session exists (primary liveness signal for TUI agents)
+	tmuxAlive := session.HasSession()
+	if !tmuxAlive && !isPersistent {
+		config.Info("Watchdog: Session %s no longer exists for agent %s (ZFC: observable state)", sessionName, agentID)
+		w.DB.RecordEvent(sessionName, constants.EventTypeSessionDead, "Tmux session no longer exists - ZFC: observable state wins")
+		return w.terminateAgent(timeoutCtx, agentID, session, "tmux_dead")
 	}
 
 	// 2. Check tmux connectivity (ping)
-	if !session.Ping() {
+	if tmuxAlive && !session.Ping() {
 		config.Error("🚨 Watchdog: Tmux session %s is not responsive (ping failed)", sessionName)
 		w.DB.RecordEvent(sessionName, constants.EventTypeTmuxUnresponsive, "Tmux session ping failed - session may be frozen")
-		// Don't return - try to recover
 	}
 
-	// 3. Check PID liveness
+	// 3. Check PID liveness (secondary liveness signal)
 	pid, err := session.GetPID()
+	pidAlive := false
 	if err != nil {
 		config.Error("Watchdog: Could not get PID for session %s: %v", sessionName, err)
 		w.DB.RecordEvent(sessionName, constants.EventTypePIDCheckFailed, fmt.Sprintf("Failed to get PID: %v", err))
-	} else {
-		if !sandbox.IsProcessAlive(pid) {
-			config.Error("🚨 Watchdog: Process %d in session %s is dead", pid, sessionName)
-			w.DB.RecordEvent(sessionName, constants.EventTypeProcessDead, fmt.Sprintf("Process %d is no longer alive", pid))
-			return nil
+	} else if pid > 0 {
+		pidAlive = sandbox.IsProcessAlive(pid)
+		if !pidAlive && !isPersistent {
+			config.Error("🚨 Watchdog: Process %d in session %s is dead (ZFC: pid dead but tmux alive)", pid, sessionName)
+			w.DB.RecordEvent(sessionName, constants.EventTypeProcessDead, fmt.Sprintf("Process %d is no longer alive - agent process exited, shell survived", pid))
+			return w.terminateAgent(timeoutCtx, agentID, session, "pid_dead")
 		}
 	}
 
@@ -174,6 +199,14 @@ func (w *Watchdog) checkHeartbeat(ctx context.Context, agentID string) error {
 	// Check if agent has been idle too long
 	idleTime := time.Since(lastSeen)
 
+	// PERSISTENT CAPABILITY EXEMPTION:
+	// Coordinator and monitor are expected to have long idle periods waiting for mail/events
+	// Only tmux/pid liveness matters for them - skip stale/zombie detection
+	if isPersistent {
+		config.Debug("Watchdog: %s is persistent capability, skipping time-based stale detection", agentID)
+		return nil
+	}
+
 	// ZOMBIE DETECTION: Agent completely unresponsive for extended period
 	zombieThreshold := w.Config.GetZombieThreshold()
 	if idleTime > zombieThreshold {
@@ -183,184 +216,212 @@ func (w *Watchdog) checkHeartbeat(ctx context.Context, agentID string) error {
 			state.mu.Unlock()
 			config.Error("🚨 Watchdog: Agent %s is ZOMBIE - no activity for %v (threshold: %v)", agentID, idleTime, zombieThreshold)
 			w.DB.RecordEvent(sessionName, constants.EventTypeZombieDetected, fmt.Sprintf("Agent unresponsive for %v", idleTime))
-			return w.escalateZombieAgent(timeoutCtx, agentID, session)
+			return w.terminateAgent(timeoutCtx, agentID, session, "zombie_timeout")
 		}
 		state.mu.Unlock()
 		return nil
 	}
 
 	// STALL DETECTION: Agent idle but potentially recoverable
+	// Use progressive escalation levels
 	if idleTime > stallTimeout {
 		state := w.getRecoveryState(agentID)
 		state.mu.Lock()
 
-		// Check if we're already in recovery
-		if state.recoveryInProgress {
-			// Check if recovery wait time has passed
-			recoveryWaitTime := w.Config.GetWatchdogRecoveryWaitTime()
-			if time.Since(state.lastRecoveryTime) > recoveryWaitTime && !state.escalationSent {
-				// Agent is still stuck after recovery attempt + wait time
-				state.mu.Unlock()
-				return w.escalateStuckAgent(timeoutCtx, agentID, session)
-			}
-			state.mu.Unlock()
-			return nil
+		// Initialize stalledSince on first stall detection
+		if state.stalledSince == nil {
+			now := time.Now()
+			state.stalledSince = &now
+			state.escalationLevel = EscalationLevelWarn
+		}
+
+		// Calculate expected escalation level based on time stalled
+		stalledMs := time.Since(*state.stalledSince).Milliseconds()
+		nudgeIntervalMs := nudgeInterval.Milliseconds()
+		expectedLevel := int(stalledMs / nudgeIntervalMs)
+		if expectedLevel > MaxEscalationLevel {
+			expectedLevel = MaxEscalationLevel
+		}
+
+		// Advance escalation level if enough time has passed
+		if expectedLevel > state.escalationLevel {
+			state.escalationLevel = expectedLevel
 		}
 
 		// Check max recovery attempts
 		maxAttempts := w.Config.GetWatchdogMaxRecoveryAttempts()
-		if state.attempts >= maxAttempts {
+		if state.attempts >= maxAttempts && state.escalationLevel >= MaxEscalationLevel {
 			state.mu.Unlock()
-			config.Error("🚨 Watchdog: Agent %s has exceeded max recovery attempts (%d), giving up", agentID, maxAttempts)
+			config.Error("🚨 Watchdog: Agent %s has exceeded max recovery attempts (%d), terminating", agentID, maxAttempts)
 			w.DB.RecordEvent(sessionName, constants.EventTypeMaxRecoveryExceeded, fmt.Sprintf("Agent exceeded maximum recovery attempts (%d)", maxAttempts))
-			return nil
+			return w.terminateAgent(timeoutCtx, agentID, session, "max_attempts_exceeded")
 		}
 
 		state.mu.Unlock()
 
-		// Start recovery
-		config.Error("🚨 Watchdog alert: Agent %s has been idle for %v (timeout: %v)", agentID, idleTime, stallTimeout)
-		err := w.recoverStuckAgent(timeoutCtx, agentID, session, state)
-		if err != nil {
-			return fmt.Errorf("failed to recover stuck agent %s: %w", agentID, err)
-		}
+		// Execute escalation action based on level
+		return w.executeEscalationAction(ctx, agentID, session, state, idleTime)
 	}
+
+	// Agent recovered - reset escalation tracking
+	state := w.getRecoveryState(agentID)
+	state.mu.Lock()
+	if state.stalledSince != nil {
+		state.stalledSince = nil
+		state.escalationLevel = 0
+		state.attempts = 0
+		state.escalationSent = false
+		config.Info("Watchdog: Agent %s recovered - reset escalation tracking", agentID)
+	}
+	state.mu.Unlock()
 
 	return nil
 }
 
-// escalateZombieAgent escalates an agent that's completely unresponsive (zombie)
-func (w *Watchdog) escalateZombieAgent(ctx context.Context, agentID string, session *sandbox.TmuxSession) error {
+// isPersistentCapability checks if an agent has a persistent capability
+func (w *Watchdog) isPersistentCapability(agentID string) bool {
+	// Check if agent is coordinator or monitor based on agent ID pattern
+	// Coordinator: "coordinator", Monitor: "monitor"
+	lowerID := strings.ToLower(agentID)
+	return PersistentCapabilities[lowerID] ||
+		strings.HasPrefix(lowerID, "coordinator") ||
+		strings.HasPrefix(lowerID, "monitor")
+}
+
+// executeEscalationAction performs the appropriate action based on escalation level
+func (w *Watchdog) executeEscalationAction(ctx context.Context, agentID string, session *sandbox.TmuxSession, state *RecoveryState, idleTime time.Duration) error {
+	sessionName := session.SessionName
+
+	switch state.escalationLevel {
+	case EscalationLevelWarn:
+		// Level 0: Log warning only
+		config.Warn("🚨 Watchdog alert: Agent %s has been idle for %v (level 0: warn)", agentID, idleTime)
+		w.DB.RecordEvent(sessionName, constants.EventTypeRecovery, fmt.Sprintf("Agent stalled - level 0 warning (idle: %v)", idleTime))
+		return nil
+
+	case EscalationLevelNudge:
+		// Level 1: Send tmux nudge to agent
+		config.Warn("🚨 Watchdog: Agent %s stalled for %v - sending nudge (level 1)", agentID, idleTime)
+		state.mu.Lock()
+		state.attempts++
+		state.lastRecoveryTime = time.Now()
+		state.mu.Unlock()
+
+		w.DB.RecordEvent(sessionName, constants.EventTypeRecovery, fmt.Sprintf("Sending nudge to stalled agent (attempt %d)", state.attempts))
+
+		// Send escape keys to try to interrupt
+		escapeCount := w.Config.GetWatchdogEscapeKeyCount()
+		err := session.SendEscape(escapeCount)
+		if err != nil {
+			config.Error("Watchdog: Failed to send escape keys to %s: %v", agentID, err)
+		}
+
+		// Send mail to agent
+		msgQuery := `INSERT INTO mail (sender, recipient, subject, body, type, priority) VALUES ('Coordinator', ?, 'System Alert', 'System alert: No activity detected for a while. Are you stuck? Please respond with your status.', ?, ?)`
+		_, err = w.DB.ExecContext(ctx, msgQuery, agentID, db.MailTypeStatus, db.PriorityHigh)
+		if err != nil {
+			config.Error("Watchdog: Failed to send recovery mail to %s: %v", agentID, err)
+		}
+
+		return nil
+
+	case EscalationLevelEscalate:
+		// Level 2: Invoke Tier 1 AI triage
+		config.Warn("🚨 Watchdog: Agent %s still stalled - invoking Tier 1 AI triage (level 2)", agentID)
+		state.mu.Lock()
+		state.attempts++
+		state.lastRecoveryTime = time.Now()
+		state.mu.Unlock()
+
+		w.DB.RecordEvent(sessionName, constants.EventTypeRecovery, fmt.Sprintf("Invoking Tier 1 AI triage (attempt %d)", state.attempts))
+
+		// Trigger Tier 1 triage in background
+		if w.tier1Enabled {
+			go func() {
+				triageCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+				defer cancel()
+
+				analysis, err := w.tier1.PerformTriage(triageCtx, agentID)
+				if err != nil {
+					config.Error("Watchdog: Tier 1 triage failed for %s: %v", agentID, err)
+					w.DB.RecordEvent(sessionName, constants.EventTypeTriageError, fmt.Sprintf("Tier 1 triage error: %v", err))
+				} else {
+					config.Info("Watchdog: Tier 1 triage completed for %s - Failure mode: %s (confidence: %.2f)",
+						agentID, analysis.FailureMode, analysis.Confidence)
+
+					// If triage recommends termination, escalate to level 3
+					if analysis.FailureMode == FailureModeTerminal {
+						config.Error("Watchdog: Tier 1 classified %s as terminal failure - escalating to terminate", agentID)
+						w.terminateAgent(ctx, agentID, session, "triage_terminal")
+					}
+				}
+			}()
+		}
+
+		return nil
+
+	case EscalationLevelTerminate:
+		// Level 3: Kill the session
+		config.Error("🚨 Watchdog: Agent %s reached max escalation - terminating", agentID)
+		w.DB.RecordEvent(sessionName, constants.EventTypeMaxRecoveryExceeded, "Agent reached max escalation level - terminating")
+		return w.terminateAgent(ctx, agentID, session, "max_escalation")
+
+	default:
+		return nil
+	}
+}
+
+// terminateAgent kills an agent session and records the failure
+func (w *Watchdog) terminateAgent(ctx context.Context, agentID string, session *sandbox.TmuxSession, reason string) error {
 	state := w.getRecoveryState(agentID)
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	if state.escalationSent {
-		return nil // Already escalated
+		return nil // Already terminated
 	}
 
 	state.escalationSent = true
-	state.recoveryInProgress = false
-
 	sessionName := session.SessionName
-	config.Error("🚨 Watchdog: ZOMBIE ESCALATION - Agent %s is completely unresponsive", agentID)
 
-	// Record zombie event
-	w.DB.RecordEvent(sessionName, constants.EventTypeZombieEscalation, "Agent is zombie - may need session kill and manual intervention")
+	config.Error("🚨 Watchdog: TERMINATING agent %s (reason: %s)", agentID, reason)
+	w.DB.RecordEvent(sessionName, constants.EventTypeZombieEscalation, fmt.Sprintf("Agent terminated: %s", reason))
+
+	// Record failure to expertise/knowledge system
+	w.recordFailure(agentID, reason)
 
 	// Send urgent email to Coordinator
 	coordinatorMsg := fmt.Sprintf(
-		"ZOMBIE ALERT: Agent %s has been completely unresponsive for an extended period.\n\n"+
-			"The tmux session may need to be killed manually.\n"+
+		"AGENT TERMINATED: Agent %s has been terminated by the watchdog.\n\n"+
+			"Reason: %s\n"+
 			"Recovery attempts: %d\n"+
+			"Last activity: %v\n"+
 			"Consider checking: tmux ls | grep %s",
-		agentID, state.attempts, agentID)
+		agentID, reason, state.attempts, state.lastRecoveryTime, agentID)
 
-	msgQuery := `INSERT INTO mail (sender, recipient, subject, body, type, priority) VALUES (?, 'Coordinator', 'ZOMBIE: Unresponsive Agent', ?, ?, ?)`
+	msgQuery := `INSERT INTO mail (sender, recipient, subject, body, type, priority) VALUES (?, 'Coordinator', 'AGENT TERMINATED: %s', ?, ?, ?)`
 	_, err := w.DB.ExecContext(ctx, msgQuery, agentID, coordinatorMsg, db.MailTypeEscalation, db.PriorityCritical)
 	if err != nil {
-		return fmt.Errorf("failed to send zombie escalation mail: %w", err)
+		return fmt.Errorf("failed to send termination mail: %w", err)
 	}
 
-	config.Info("Watchdog: Zombie escalation sent to Coordinator about agent %s", agentID)
+	// Note: Actual session killing would be done by the caller or coordinator
+	// The watchdog primarily monitors and escalates
+
+	config.Info("Watchdog: Termination alert sent to Coordinator about agent %s", agentID)
 
 	return nil
 }
 
-func (w *Watchdog) recoverStuckAgent(ctx context.Context, agentID string, session *sandbox.TmuxSession, state *RecoveryState) error {
-	state.mu.Lock()
-	defer state.mu.Unlock()
+// recordFailure records an agent failure to the expertise/knowledge system
+func (w *Watchdog) recordFailure(agentID string, reason string) {
+	// This would integrate with the expertise/knowledge system
+	// For now, we'll record it as an event that can be picked up by mulch
+	config.Info("Watchdog: Recording failure for agent %s (reason: %s)", agentID, reason)
 
-	state.attempts++
-	state.lastRecoveryTime = time.Now()
-	state.recoveryInProgress = true
-
-	escapeCount := w.Config.GetWatchdogEscapeKeyCount()
-	sessionName := session.SessionName
-
-	log.Printf("Watchdog: Recovering agent %s (attempt %d/%d) - sending %d escape key(s)",
-		agentID, state.attempts, w.Config.GetWatchdogMaxRecoveryAttempts(), escapeCount)
-
-	// Record recovery attempt event
-	w.DB.RecordEvent(sessionName, constants.EventTypeRecovery,
-		fmt.Sprintf("Sending %d escape key(s) to interrupt stuck process (attempt %d)", escapeCount, state.attempts))
-
-	// TIER 1: AI Triage - Perform intelligent analysis on first recovery attempt
-	if w.tier1Enabled && state.attempts == 1 {
-		log.Printf("Watchdog: Triggering Tier 1 AI Triage for %s", agentID)
-		w.DB.RecordEvent(sessionName, constants.EventTypeTriageTriggered, "Tier 1 AI Triage triggered on first recovery attempt")
-
-		// Run triage in background to not block
-		go func() {
-			triageCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-			defer cancel()
-
-			analysis, err := w.tier1.PerformTriage(triageCtx, agentID)
-			if err != nil {
-				log.Printf("Watchdog: Tier 1 triage failed for %s: %v", agentID, err)
-				w.DB.RecordEvent(sessionName, constants.EventTypeTriageError, fmt.Sprintf("Tier 1 triage error: %v", err))
-			} else {
-				log.Printf("Watchdog: Tier 1 triage completed for %s - Failure mode: %s (confidence: %.2f)",
-					agentID, analysis.FailureMode, analysis.Confidence)
-			}
-		}()
-	}
-
-	// Send escape keys to try to interrupt the current process
-	err := session.SendEscape(escapeCount)
-	if err != nil {
-		log.Printf("Watchdog: Failed to send escape keys to %s: %v", agentID, err)
-		// Continue anyway, session might still be recoverable
-	}
-
-	// Send a mail message to the agent
-	msgQuery := `INSERT INTO mail (sender, recipient, subject, body, type, priority) VALUES ('Coordinator', ?, 'System Alert', 'System alert: No activity detected. Are you stuck? I sent escape keys to interrupt the current process. Please respond with your status.', ?, ?)`
-	_, err = w.DB.ExecContext(ctx, msgQuery, agentID, db.MailTypeStatus, db.PriorityHigh)
-	if err != nil {
-		log.Printf("Watchdog: Failed to send recovery mail to %s: %v", agentID, err)
-	}
-
-	// The escalation will happen in checkHeartbeat after RecoveryWaitTime passes
-	// if the agent is still not responding
-
-	return nil
-}
-
-func (w *Watchdog) escalateStuckAgent(ctx context.Context, agentID string, session *sandbox.TmuxSession) error {
-	state := w.getRecoveryState(agentID)
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	if state.escalationSent {
-		return nil // Already escalated
-	}
-
-	state.escalationSent = true
-	state.recoveryInProgress = false
-	sessionName := session.SessionName
-
-	log.Printf("🚨 Watchdog: ESCALATION - Agent %s is non-responsive even after recovery attempt", agentID)
-
-	// Record escalation event
-	w.DB.RecordEvent(sessionName, constants.EventTypeEscalation, "Agent non-responsive after recovery attempt - notifying Coordinator")
-
-	// Send email to Coordinator
-	coordinatorMsg := fmt.Sprintf(
-		"ESCALATION: Agent %s has been non-responsive for an extended period.\n\n"+
-			"Recovery attempts: %d\n"+
-			"Last recovery attempt: %v\n"+
-			"The agent may need manual intervention or the tmux session may need to be killed.",
-		agentID, state.attempts, state.lastRecoveryTime)
-
-	msgQuery := `INSERT INTO mail (sender, recipient, subject, body) VALUES (?, 'Coordinator', 'ESCALATION: Non-responsive Agent', ?)`
-	_, err := w.DB.ExecContext(ctx, msgQuery, agentID, coordinatorMsg)
-	if err != nil {
-		return fmt.Errorf("failed to send escalation mail: %w", err)
-	}
-
-	log.Printf("Watchdog: Escalation email sent to Coordinator about agent %s", agentID)
-
-	return nil
+	// Record to expertise system if available
+	description := fmt.Sprintf("Agent %s failed: %s", agentID, reason)
+	w.DB.RecordEvent(agentID, "agent_failure", description)
 }
 
 // ResetRecoveryState resets the recovery state for an agent (call this when agent becomes active again)
@@ -373,6 +434,8 @@ func (w *Watchdog) ResetRecoveryState(agentID string) {
 		state.attempts = 0
 		state.recoveryInProgress = false
 		state.escalationSent = false
+		state.escalationLevel = 0
+		state.stalledSince = nil
 		state.mu.Unlock()
 		log.Printf("Watchdog: Reset recovery state for agent %s", agentID)
 	}
