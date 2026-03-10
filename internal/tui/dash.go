@@ -19,6 +19,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const tokenPaneWidth = 25
+
 // ---------------------------------------------------------
 // Data Structures
 // ---------------------------------------------------------
@@ -179,6 +181,15 @@ func (f feedItem) FilterValue() string {
 // Main Model
 // ---------------------------------------------------------
 
+type TokenSummary struct {
+	TotalTokens           int64
+	TotalCostUSD          float64
+	TotalPromptTokens     int64
+	TotalCompletionTokens int64
+	AgentCount            int
+	TopConsumers          []db.TokenMetrics
+}
+
 type dashModel struct {
 	db          *db.DB
 	projectRoot string
@@ -195,9 +206,13 @@ type dashModel struct {
 	activePane      int // 0: Tasks, 1: Agents, 2: Feed
 	showTasksPane   bool
 	showAgentsPane  bool
+	showTokensPane  bool
 	feedSortDesc    bool
 	showQuitConfirm bool
 	quitConfirmed   bool
+
+	// Token data
+	tokenSummary TokenSummary
 
 	// Coordinator info
 	coordinatorRunning bool
@@ -238,6 +253,7 @@ func NewDashModel(database *db.DB, projectRoot string) tea.Model {
 		activePane:     1, // Default to agents pane
 		showTasksPane:  true,
 		showAgentsPane: true,
+		showTokensPane: true,
 		feedSortDesc:   true,
 
 		inactivePaneStyle: lipgloss.NewStyle().
@@ -347,23 +363,32 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.feedSortDesc = !m.feedSortDesc
 			m.refreshData()
 		case "tab", "right":
-			m.activePane = (m.activePane + 1) % 3
+			m.activePane = (m.activePane + 1) % 4
 			if m.activePane == 0 && !m.showTasksPane {
 				m.activePane = 1
 			}
 			if m.activePane == 1 && !m.showAgentsPane {
 				m.activePane = 2
 			}
+			if m.activePane == 2 && !m.showTokensPane {
+				m.activePane = 3
+			}
 		case "shift+tab", "left":
 			m.activePane--
 			if m.activePane < 0 {
+				m.activePane = 3
+			}
+			if m.activePane == 3 && !m.showTokensPane {
 				m.activePane = 2
+			}
+			if m.activePane == 2 && !m.showTokensPane {
+				m.activePane = 1
 			}
 			if m.activePane == 1 && !m.showAgentsPane {
 				m.activePane = 0
 			}
 			if m.activePane == 0 && !m.showTasksPane {
-				m.activePane = 2
+				m.activePane = 1
 			}
 		case "t":
 			m.showTasksPane = !m.showTasksPane
@@ -376,6 +401,9 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.showAgentsPane && m.activePane == 1 {
 				m.activePane = 2
 			}
+			m.resizePanes()
+		case "k":
+			m.showTokensPane = !m.showTokensPane
 			m.resizePanes()
 		case "c":
 			// Open Coordinator in tmux popup for interaction
@@ -434,15 +462,20 @@ func (m *dashModel) resizePanes() {
 	hBord := 4
 	vBord := 2
 
-	// 3-pane layout: Tasks (left), Agents (top-right), Feed (bottom-right)
-	leftWidth := 0
-	if m.showTasksPane {
-		leftWidth = (m.width * 35) / 100
+	// Layout: Tasks (left), Agents/Feed (center), Tokens (right)
+	tokensWidth := 0
+	if m.showTokensPane {
+		tokensWidth = tokenPaneWidth
 	}
 
-	rightWidth := m.width - leftWidth
+	leftWidth := 0
+	if m.showTasksPane {
+		leftWidth = (m.width * 30) / 100
+	}
 
-	// Split right side into Agents (top 45%) and Feed (bottom 55%)
+	centerWidth := m.width - leftWidth - tokensWidth
+
+	// Split center into Agents (top 45%) and Feed (bottom 55%)
 	agentsHeight := 0
 	if m.showAgentsPane {
 		agentsHeight = (m.height * 45) / 100
@@ -456,10 +489,10 @@ func (m *dashModel) resizePanes() {
 	}
 
 	if m.showAgentsPane {
-		m.agentList.SetSize(rightWidth-hBord, agentsHeight-vBord)
+		m.agentList.SetSize(centerWidth-hBord, agentsHeight-vBord)
 	}
 
-	m.feedList.SetSize(rightWidth-hBord, feedHeight-vBord)
+	m.feedList.SetSize(centerWidth-hBord, feedHeight-vBord)
 }
 
 func (m *dashModel) refreshData() {
@@ -565,6 +598,22 @@ func (m *dashModel) refreshData() {
 	}
 	m.feedList.SetItems(feedItems)
 
+	// Token Metrics
+	if m.showTokensPane {
+		summary, err := m.db.GetTokenMetricsSummary()
+		if err == nil {
+			m.tokenSummary.TotalTokens = summary["total_tokens"].(int64)
+			m.tokenSummary.TotalCostUSD = summary["total_cost_usd"].(float64)
+			m.tokenSummary.TotalPromptTokens = summary["total_prompt_tokens"].(int64)
+			m.tokenSummary.TotalCompletionTokens = summary["total_completion_tokens"].(int64)
+			m.tokenSummary.AgentCount = summary["agent_count"].(int)
+		}
+		topConsumers, err := m.db.GetTopTokenConsumers(5)
+		if err == nil {
+			m.tokenSummary.TopConsumers = topConsumers
+		}
+	}
+
 	// Coordinator Status
 	coordSession := prefix + "coordinator"
 	coordCheck := exec.Command("tmux", "has-session", "-t", coordSession)
@@ -665,12 +714,17 @@ func (m dashModel) View() string {
 	hBord := 4
 	vBord := 2
 
-	// 3-panel layout: [Tasks 35%] [Agents 65% top 45%] [Feed 65% bottom 55%]
+	// Layout: [Tasks 30%] [Center: Agents/Feed] [Tokens 25]
+	tokensWidth := 0
+	if m.showTokensPane {
+		tokensWidth = tokenPaneWidth
+	}
+
 	taskWidth := 0
 	if m.showTasksPane {
-		taskWidth = (m.width * 35) / 100
+		taskWidth = (m.width * 30) / 100
 	}
-	rightWidth := m.width - taskWidth
+	centerWidth := m.width - taskWidth - tokensWidth
 
 	agentsHeight := 0
 	if m.showAgentsPane {
@@ -679,32 +733,42 @@ func (m dashModel) View() string {
 	feedHeight := m.height - agentsHeight - 3
 
 	// Build each pane
-	var taskPane, agentPane, feedPane string
+	var taskPane, agentPane, feedPane, tokenPane string
 
 	if m.showTasksPane {
 		taskPane = getStyle(0).Width(taskWidth - hBord).Height(m.height - vBord - 3).Render(m.taskList.View())
 	}
 
 	if m.showAgentsPane {
-		agentPane = getStyle(1).Width(rightWidth - hBord).Height(agentsHeight - vBord).Render(m.agentList.View())
+		agentPane = getStyle(1).Width(centerWidth - hBord).Height(agentsHeight - vBord).Render(m.agentList.View())
 	}
 
-	feedPane = getStyle(2).Width(rightWidth - hBord).Height(feedHeight - vBord).Render(m.feedList.View())
+	feedPane = getStyle(2).Width(centerWidth - hBord).Height(feedHeight - vBord).Render(m.feedList.View())
 
-	// Right column: Agents on top, Feed on bottom
-	rightColumn := lipgloss.JoinVertical(lipgloss.Left, agentPane, feedPane)
+	// Token pane
+	if m.showTokensPane {
+		tokenPane = m.renderTokenPane(tokensWidth - hBord)
+	}
+
+	// Center column: Agents on top, Feed on bottom
+	centerColumn := lipgloss.JoinVertical(lipgloss.Left, agentPane, feedPane)
 
 	// Main layout
 	var mainRow string
-	if m.showTasksPane {
-		mainRow = lipgloss.JoinHorizontal(lipgloss.Top, taskPane, rightColumn)
+	if m.showTasksPane && m.showTokensPane {
+		mainRow = lipgloss.JoinHorizontal(lipgloss.Top, taskPane, centerColumn, tokenPane)
+	} else if m.showTasksPane {
+		mainRow = lipgloss.JoinHorizontal(lipgloss.Top, taskPane, centerColumn)
+	} else if m.showTokensPane {
+		mainRow = lipgloss.JoinHorizontal(lipgloss.Top, centerColumn, tokenPane)
 	} else {
-		mainRow = rightColumn
+		mainRow = centerColumn
 	}
 
 	// Status indicators
 	taskStatus := boolStatus(m.showTasksPane)
 	agentStatus := boolStatus(m.showAgentsPane)
+	tokenStatus := boolStatus(m.showTokensPane)
 
 	// Coordinator status for header
 	coordIndicator := "✗"
@@ -719,10 +783,14 @@ func (m dashModel) View() string {
 		sortStr = "ASC"
 	}
 
-	// Header with coordinator status
-	headerText := fmt.Sprintf(" Coordinator: %s | API: %d | MCP: %d ",
+	// Header with coordinator status and token summary
+	tokenStr := ""
+	if m.tokenSummary.TotalTokens > 0 {
+		tokenStr = fmt.Sprintf(" | Tokens: %s ($%.2f)", formatTokens(m.tokenSummary.TotalTokens), m.tokenSummary.TotalCostUSD)
+	}
+	headerText := fmt.Sprintf(" Coordinator: %s | API: %d | MCP: %d%s ",
 		lipgloss.NewStyle().Foreground(lipgloss.Color(coordColor)).Render(coordIndicator),
-		m.apiPort, m.mcpPort)
+		m.apiPort, m.mcpPort, tokenStr)
 	header := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FAFAFA")).
@@ -732,9 +800,60 @@ func (m dashModel) View() string {
 		Render(headerText)
 
 	// Footer with keybindings
-	footerText := fmt.Sprintf(" [n] new task • [enter] attach agent • [c] coordinator • [t] %s tasks • [a] %s agents • [s] %s • [q] quit ",
-		taskStatus, agentStatus, sortStr)
+	footerText := fmt.Sprintf(" [n] new task • [enter] attach agent • [c] coordinator • [t] %s tasks • [a] %s agents • [k] %s tokens • [s] %s • [q] quit ",
+		taskStatus, agentStatus, tokenStatus, sortStr)
 	footer := m.footerStyle.Width(m.width).Align(lipgloss.Right).Render(footerText)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, mainRow, footer)
+}
+
+func (m dashModel) renderTokenPane(width int) string {
+	style := m.inactivePaneStyle.Width(width).Height(m.height - 5)
+
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700"))
+	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FAFAFA"))
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#A8A8A8"))
+
+	var lines []string
+	lines = append(lines, titleStyle.Render("TOKEN USAGE"))
+
+	lines = append(lines, "")
+	lines = append(lines, valueStyle.Render(fmt.Sprintf("Total: %s", formatTokens(m.tokenSummary.TotalTokens))))
+	lines = append(lines, labelStyle.Render(fmt.Sprintf("Cost: $%.4f", m.tokenSummary.TotalCostUSD)))
+
+	lines = append(lines, "")
+	lines = append(lines, labelStyle.Render("Prompt:"))
+	lines = append(lines, valueStyle.Render(formatTokens(m.tokenSummary.TotalPromptTokens)))
+
+	lines = append(lines, "")
+	lines = append(lines, labelStyle.Render("Completion:"))
+	lines = append(lines, valueStyle.Render(formatTokens(m.tokenSummary.TotalCompletionTokens)))
+
+	lines = append(lines, "")
+	lines = append(lines, labelStyle.Render(fmt.Sprintf("Agents: %d", m.tokenSummary.AgentCount)))
+
+	if len(m.tokenSummary.TopConsumers) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, labelStyle.Render("Top Consumers:"))
+		for _, tc := range m.tokenSummary.TopConsumers {
+			agentName := tc.AgentID
+			if idx := strings.LastIndex(agentName, "/"); idx != -1 {
+				agentName = agentName[idx+1:]
+			}
+			lines = append(lines, valueStyle.Render(fmt.Sprintf("  %s: %s", agentName, formatTokens(int64(tc.TotalTokens)))))
+		}
+	}
+
+	content := lipgloss.NewStyle().Width(width - 2).Render(strings.Join(lines, "\n"))
+	return style.Render(content)
+}
+
+func formatTokens(n int64) string {
+	if n >= 1_000_000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+	if n >= 1_000 {
+		return fmt.Sprintf("%.1fK", float64(n)/1_000)
+	}
+	return fmt.Sprintf("%d", n)
 }
