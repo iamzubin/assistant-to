@@ -66,6 +66,14 @@ type WatchdogConfig struct {
 	MaxRecoveryAttempts int  `yaml:"maxRecoveryAttempts"`
 }
 
+// CleanupConfig holds cleanup settings for automatic agent/worktree cleanup
+type CleanupConfig struct {
+	Enabled        bool `yaml:"enabled"`        // Enable automatic cleanup
+	IntervalMs     int  `yaml:"intervalMs"`     // How often to run cleanup check
+	CompletedDelay int  `yaml:"completedDelay"` // Minutes to wait after task completion before cleanup
+	OrphanTimeout  int  `yaml:"orphanTimeout"`  // Minutes to wait before cleaning up orphan sessions
+}
+
 // LoggingConfig holds logging settings
 type LoggingConfig struct {
 	Verbose       bool `yaml:"verbose"`
@@ -127,6 +135,7 @@ type Config struct {
 	Mulch       MulchConfig                   `yaml:"mulch"`
 	Merge       MergeConfig                   `yaml:"merge"`
 	Watchdog    WatchdogConfig                `yaml:"watchdog"`
+	Cleanup     CleanupConfig                 `yaml:"cleanup"`
 	Logging     LoggingConfig                 `yaml:"logging"`
 	API         APIConfig                     `yaml:"api"`
 	AgentsRT    map[string]AgentRuntimeConfig `yaml:"agentsRuntime"` // Per-agent runtime config: coordinator, builder, scout, reviewer, merger
@@ -179,6 +188,12 @@ func Default() *Config {
 			RecoveryWaitTime:    5,
 			EscapeKeyCount:      2,
 			MaxRecoveryAttempts: 3,
+		},
+		Cleanup: CleanupConfig{
+			Enabled:        true,
+			IntervalMs:     60000, // 1 minute
+			CompletedDelay: 5,     // 5 minutes
+			OrphanTimeout:  10,    // 10 minutes
 		},
 		Logging: LoggingConfig{
 			Verbose:       false,
@@ -426,6 +441,35 @@ func (c *Config) IsMulchEnabled() bool {
 // Note: Currently defined but not actively used
 func (c *Config) GetMulchDomains() []string {
 	return c.Mulch.Domains
+}
+
+// IsCleanupEnabled returns whether automatic cleanup is enabled
+func (c *Config) IsCleanupEnabled() bool {
+	return c.Cleanup.Enabled
+}
+
+// GetCleanupInterval returns the cleanup check interval
+func (c *Config) GetCleanupInterval() time.Duration {
+	if c.Cleanup.IntervalMs <= 0 {
+		return 60 * time.Second // default 1 minute
+	}
+	return time.Duration(c.Cleanup.IntervalMs) * time.Millisecond
+}
+
+// GetCleanupCompletedDelay returns the delay after task completion before cleanup
+func (c *Config) GetCleanupCompletedDelay() time.Duration {
+	if c.Cleanup.CompletedDelay <= 0 {
+		return 5 * time.Minute // default 5 minutes
+	}
+	return time.Duration(c.Cleanup.CompletedDelay) * time.Minute
+}
+
+// GetCleanupOrphanTimeout returns the timeout for orphan session cleanup
+func (c *Config) GetCleanupOrphanTimeout() time.Duration {
+	if c.Cleanup.OrphanTimeout <= 0 {
+		return 10 * time.Minute // default 10 minutes
+	}
+	return time.Duration(c.Cleanup.OrphanTimeout) * time.Minute
 }
 
 // Save writes the current configuration to the specified path as YAML.

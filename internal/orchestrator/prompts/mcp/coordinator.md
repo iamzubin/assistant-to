@@ -23,6 +23,13 @@ MCP server at 127.0.0.1:{{.MCPPort}} provides swarm management tools.
 - Check `mail_list` (without filter) to intercept and monitor ALL agent communication
 - Use `buffer_capture` to "snoop" on agent terminals without connecting
 - Use `session_send` to intervene or rescue stuck agents
-- Use `cleanup` after task completion
+- Use `cleanup` after task completion (or let automatic cleanup handle it)
 - Spawn agents via `agent_spawn`
 - Log significant swarm events with `log_event`
+
+## Automatic Cleanup
+The coordinator runs automatic cleanup every minute:
+- Completed/failed tasks are cleaned up after a configurable delay (default 5 minutes)
+- Orphan tmux sessions are detected and killed
+- Worktrees are automatically teardown after task completion
+- Use `cleanup` for immediate cleanup when needed (e.g., before spawning dependent tasks)
