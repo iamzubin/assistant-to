@@ -569,34 +569,94 @@ func parseAgentFile(path string) (*OpenCodeAgent, error) {
 	agent := &OpenCodeAgent{
 		Name:         strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
 		FilePath:     path,
-		Instructions: string(content),
 		Mode:         "subagent",
+		Instructions: string(content),
 	}
 
 	lines := strings.Split(string(content), "\n")
+
+	var frontmatter []string
+	inFrontmatter := false
+	bodyStart := 0
+	hasFrontmatter := false
+
 	for i, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "description:") {
-			agent.Description = strings.TrimSpace(strings.TrimPrefix(line, "description:"))
-		} else if strings.HasPrefix(line, "mode:") {
-			agent.Mode = strings.TrimSpace(strings.TrimPrefix(line, "mode:"))
-		} else if strings.HasPrefix(line, "model:") {
-			agent.Model = strings.TrimSpace(strings.TrimPrefix(line, "model:"))
-		} else if strings.HasPrefix(line, "temperature:") {
-			tempStr := strings.TrimSpace(strings.TrimPrefix(line, "temperature:"))
-			if temp, err := strconv.ParseFloat(tempStr, 64); err == nil {
-				agent.Temperature = temp
-			}
-		} else if strings.HasPrefix(line, "tools:") {
-			toolsStr := strings.TrimSpace(strings.TrimPrefix(line, "tools:"))
-			agent.AllowedTools = strings.Split(toolsStr, ",")
-			for j := range agent.AllowedTools {
-				agent.AllowedTools[j] = strings.TrimSpace(agent.AllowedTools[j])
+		lineContent := strings.TrimSpace(line)
+		if lineContent == "---" {
+			if !inFrontmatter {
+				inFrontmatter = true
+				hasFrontmatter = true
+				continue
+			} else {
+				frontmatter = lines[1:i]
+				bodyStart = i + 1
+				break
 			}
 		}
-		if i > 10 {
-			break
+	}
+
+	if hasFrontmatter && len(frontmatter) > 0 {
+		agent.Instructions = strings.TrimSpace(strings.Join(lines[bodyStart:], "\n"))
+
+		for _, line := range frontmatter {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "description:") {
+				agent.Description = strings.TrimSpace(strings.TrimPrefix(line, "description:"))
+			} else if strings.HasPrefix(line, "mode:") {
+				agent.Mode = strings.TrimSpace(strings.TrimPrefix(line, "mode:"))
+			} else if strings.HasPrefix(line, "model:") {
+				agent.Model = strings.TrimSpace(strings.TrimPrefix(line, "model:"))
+			} else if strings.HasPrefix(line, "temperature:") {
+				tempStr := strings.TrimSpace(strings.TrimPrefix(line, "temperature:"))
+				if temp, err := strconv.ParseFloat(tempStr, 64); err == nil {
+					agent.Temperature = temp
+				}
+			} else if strings.HasPrefix(line, "tools:") {
+				toolsStr := strings.TrimSpace(strings.TrimPrefix(line, "tools:"))
+				if toolsStr != "" {
+					agent.AllowedTools = strings.Split(toolsStr, ",")
+					for j := range agent.AllowedTools {
+						agent.AllowedTools[j] = strings.TrimSpace(agent.AllowedTools[j])
+					}
+				}
+			} else if strings.HasPrefix(line, "permission:") {
+			} else if strings.HasPrefix(line, "prompt:") {
+			} else if strings.HasPrefix(line, "steps:") {
+			} else if strings.HasPrefix(line, "disable:") {
+			} else if strings.HasPrefix(line, "hidden:") {
+			} else if strings.HasPrefix(line, "top_p:") {
+			} else if strings.HasPrefix(line, "color:") {
+			}
 		}
+	} else if !hasFrontmatter {
+		for i, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "description:") {
+				agent.Description = strings.TrimSpace(strings.TrimPrefix(line, "description:"))
+			} else if strings.HasPrefix(line, "mode:") {
+				agent.Mode = strings.TrimSpace(strings.TrimPrefix(line, "mode:"))
+			} else if strings.HasPrefix(line, "model:") {
+				agent.Model = strings.TrimSpace(strings.TrimPrefix(line, "model:"))
+			} else if strings.HasPrefix(line, "temperature:") {
+				tempStr := strings.TrimSpace(strings.TrimPrefix(line, "temperature:"))
+				if temp, err := strconv.ParseFloat(tempStr, 64); err == nil {
+					agent.Temperature = temp
+				}
+			} else if strings.HasPrefix(line, "tools:") {
+				toolsStr := strings.TrimSpace(strings.TrimPrefix(line, "tools:"))
+				agent.AllowedTools = strings.Split(toolsStr, ",")
+				for j := range agent.AllowedTools {
+					agent.AllowedTools[j] = strings.TrimSpace(agent.AllowedTools[j])
+				}
+			}
+			if i > 10 {
+				break
+			}
+		}
+	}
+
+	if agent.Instructions == "" {
+		agent.Instructions = string(content)
 	}
 
 	return agent, nil
@@ -613,17 +673,39 @@ func parseSkillDir(path string) (*GeminiSkill, error) {
 		Path: path,
 	}
 
-	descriptionPath := filepath.Join(path, "description.md")
-	if data, err := os.ReadFile(descriptionPath); err == nil {
-		content := string(data)
+	skillMDPath := filepath.Join(path, "SKILL.md")
+	descriptionMDPath := filepath.Join(path, "description.md")
+
+	var content string
+	var description string
+
+	if data, err := os.ReadFile(skillMDPath); err == nil {
+		content = string(data)
 		lines := strings.Split(content, "\n")
 		if len(lines) > 0 {
-			firstLine := strings.TrimSpace(lines[0])
-			if len(firstLine) > 0 && len(firstLine) < 200 {
-				skill.Description = firstLine
+			description = strings.TrimSpace(lines[0])
+			description = strings.TrimPrefix(description, "# ")
+			description = strings.TrimPrefix(description, "## ")
+			description = strings.TrimPrefix(description, "### ")
+			if len(description) > 200 {
+				description = description[:200]
+			}
+		}
+	} else if data, err := os.ReadFile(descriptionMDPath); err == nil {
+		content = string(data)
+		lines := strings.Split(content, "\n")
+		if len(lines) > 0 {
+			description = strings.TrimSpace(lines[0])
+			description = strings.TrimPrefix(description, "# ")
+			description = strings.TrimPrefix(description, "## ")
+			description = strings.TrimPrefix(description, "### ")
+			if len(description) > 200 {
+				description = description[:200]
 			}
 		}
 	}
+
+	skill.Description = description
 
 	return skill, nil
 }

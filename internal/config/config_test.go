@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +58,55 @@ You are a test agent that does things.
 	}
 }
 
+func TestOpenCodeAgentParsingWithFrontmatter(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	agentsDir := filepath.Join(tmpDir, ".opencode", "agents")
+	os.MkdirAll(agentsDir, 0755)
+
+	agentContent := `---
+description: A YAML frontmatter agent
+mode: primary
+model: gemini-2.5-pro
+temperature: 0.5
+tools: mail,log,buffer,edit
+---
+
+You are a test agent with YAML frontmatter.
+This is the body content with agent instructions.
+`
+
+	agentPath := filepath.Join(agentsDir, "frontmatter-agent.md")
+	os.WriteFile(agentPath, []byte(agentContent), 0644)
+
+	agent, err := parseAgentFile(agentPath)
+	if err != nil {
+		t.Fatalf("Failed to parse agent file: %v", err)
+	}
+
+	if agent.Name != "frontmatter-agent" {
+		t.Errorf("Expected name 'frontmatter-agent', got '%s'", agent.Name)
+	}
+	if agent.Description != "A YAML frontmatter agent" {
+		t.Errorf("Expected description 'A YAML frontmatter agent', got '%s'", agent.Description)
+	}
+	if agent.Mode != "primary" {
+		t.Errorf("Expected mode 'primary', got '%s'", agent.Mode)
+	}
+	if agent.Model != "gemini-2.5-pro" {
+		t.Errorf("Expected model 'gemini-2.5-pro', got '%s'", agent.Model)
+	}
+	if agent.Temperature != 0.5 {
+		t.Errorf("Expected temperature 0.5, got %f", agent.Temperature)
+	}
+	if len(agent.AllowedTools) != 4 {
+		t.Errorf("Expected 4 tools, got %d", len(agent.AllowedTools))
+	}
+	if !strings.Contains(agent.Instructions, "YAML frontmatter") {
+		t.Errorf("Expected instructions to contain 'YAML frontmatter', got '%s'", agent.Instructions)
+	}
+}
+
 func TestGeminiSkillParsing(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -82,6 +132,36 @@ for doing things.
 	}
 	if skill.Description != "This is a test skill" {
 		t.Errorf("Expected description 'This is a test skill', got '%s'", skill.Description)
+	}
+}
+
+func TestGeminiSkillParsingWithSKILLMD(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	skillsDir := filepath.Join(tmpDir, ".gemini", "skills")
+	os.MkdirAll(skillsDir, 0755)
+
+	skillDir := filepath.Join(skillsDir, "test-skill")
+	os.MkdirAll(skillDir, 0755)
+
+	skillContent := `# Test Skill
+
+This skill does amazing things.
+More description here.
+`
+
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillContent), 0644)
+
+	skill, err := parseSkillDir(skillDir)
+	if err != nil {
+		t.Fatalf("Failed to parse skill dir: %v", err)
+	}
+
+	if skill.Name != "test-skill" {
+		t.Errorf("Expected name 'test-skill', got '%s'", skill.Name)
+	}
+	if skill.Description != "Test Skill" {
+		t.Errorf("Expected description 'Test Skill', got '%s'", skill.Description)
 	}
 }
 
