@@ -77,7 +77,7 @@ func (d *DB) InitSchema() error {
 
 	CREATE TABLE IF NOT EXISTS token_metrics (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		agent_id TEXT NOT NULL,
+		agent_id TEXT NOT NULL UNIQUE,
 		task_id INTEGER,
 		prompt_tokens INTEGER DEFAULT 0,
 		completion_tokens INTEGER DEFAULT 0,

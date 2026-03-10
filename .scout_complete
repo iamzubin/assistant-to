@@ -1,1 +1,7 @@
-scout-11 completed at 2026-03-10
+scout-7 complete
+
+Found 4 bugs:
+1. Missing UNIQUE constraint on agent_id (db/db.go)
+2. Incorrect task ID extraction from agent ID (api/server.go:628-632)
+3. Token extraction endpoint never called automatically
+4. Model name returns lowercase, breaking CalculateCost (metrics/tokens.go:81-84)
