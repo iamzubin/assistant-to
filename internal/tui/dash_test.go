@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"dwight/internal/db"
 )
 
 func TestFeedItemDescriptionTruncation(t *testing.T) {
@@ -146,5 +149,87 @@ func TestTokenSummary(t *testing.T) {
 	}
 	if summary.AgentCount != 3 {
 		t.Errorf("Expected AgentCount 3, got %d", summary.AgentCount)
+	}
+}
+
+func TestTaskItemDescriptionTruncation(t *testing.T) {
+	longDescription := "This is a very long task description that exceeds the character limit and should be truncated properly to avoid breaking the TUI layout when displayed in the task list."
+	longTargetFiles := "path/to/very/long/file/path/that/exceeds/the/limit/and/needs/to/be/truncated/for/proper/display.go"
+
+	tests := []struct {
+		name        string
+		task        db.Task
+		maxLen      int
+		wantLen     int
+		hasEllipsis bool
+	}{
+		{
+			name: "short description stays as is",
+			task: db.Task{
+				Title:       "Test Task",
+				Description: "Short desc",
+				TargetFiles: "",
+				Status:      "pending",
+				CreatedAt:   time.Now().Add(-1 * time.Hour),
+			},
+			maxLen:      maxTaskDescriptionLength,
+			wantLen:     56,
+			hasEllipsis: false,
+		},
+		{
+			name: "long description gets truncated",
+			task: db.Task{
+				Title:       "Test Task",
+				Description: longDescription,
+				TargetFiles: "",
+				Status:      "pending",
+				CreatedAt:   time.Now().Add(-1 * time.Hour),
+			},
+			maxLen:      maxTaskDescriptionLength,
+			wantLen:     maxTaskDescriptionLength,
+			hasEllipsis: true,
+		},
+		{
+			name: "both description and target files truncated",
+			task: db.Task{
+				Title:       "Test Task",
+				Description: longDescription,
+				TargetFiles: longTargetFiles,
+				Status:      "pending",
+				CreatedAt:   time.Now().Add(-1 * time.Hour),
+			},
+			maxLen:      maxTaskDescriptionLength,
+			wantLen:     maxTaskDescriptionLength,
+			hasEllipsis: true,
+		},
+		{
+			name: "empty description and files",
+			task: db.Task{
+				Title:       "Test Task",
+				Description: "",
+				TargetFiles: "",
+				Status:      "pending",
+				CreatedAt:   time.Now().Add(-1 * time.Hour),
+			},
+			maxLen:      maxTaskDescriptionLength,
+			wantLen:     35,
+			hasEllipsis: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item := taskItem{tt.task}
+			got := item.Description()
+			if len(got) > tt.maxLen {
+				t.Errorf("Description() len = %d, want <= %d", len(got), tt.maxLen)
+			}
+			if len(got) != tt.wantLen {
+				t.Errorf("Description() len = %d, want %d", len(got), tt.wantLen)
+			}
+			if tt.hasEllipsis && !strings.HasSuffix(got, "...") {
+				t.Errorf("Description() expected ellipsis suffix, got: %s", got[len(got)-5:])
+			}
+		})
 	}
 }

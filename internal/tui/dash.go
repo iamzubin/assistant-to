@@ -83,6 +83,9 @@ func (t taskItem) Title() string {
 	}
 	return fmt.Sprintf("[%d] %s %s%s", t.ID, priority, t.Task.Title, parentInfo)
 }
+
+const maxTaskDescriptionLength = 80
+
 func (t taskItem) Description() string {
 	statusColored := lipgloss.NewStyle().Foreground(statusColor(t.Status)).Bold(true).Render(t.Status)
 
@@ -91,16 +94,16 @@ func (t taskItem) Description() string {
 
 	if t.Task.Description != "" {
 		desc := t.Task.Description
-		if len(desc) > 60 {
-			desc = desc[:57] + "..."
+		if len(desc) > 40 {
+			desc = desc[:37] + "..."
 		}
 		descParts = append(descParts, fmt.Sprintf("Desc: %s", desc))
 	}
 
 	if t.Task.TargetFiles != "" {
 		files := t.Task.TargetFiles
-		if len(files) > 50 {
-			files = files[:47] + "..."
+		if len(files) > 30 {
+			files = files[:27] + "..."
 		}
 		descParts = append(descParts, fmt.Sprintf("Files: %s", files))
 	}
@@ -109,7 +112,11 @@ func (t taskItem) Description() string {
 	ageStr := formatDuration(age)
 	descParts = append(descParts, fmt.Sprintf("Created: %s ago", ageStr))
 
-	return strings.Join(descParts, " • ")
+	combined := strings.Join(descParts, " • ")
+	if len(combined) > maxTaskDescriptionLength {
+		combined = combined[:maxTaskDescriptionLength-3] + "..."
+	}
+	return combined
 }
 func (t taskItem) FilterValue() string { return t.Task.Title }
 
@@ -454,6 +461,13 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+const (
+	minTaskPaneWidth   = 30
+	minAgentPaneHeight = 10
+	minTokenPaneWidth  = 25
+	minCenterPaneWidth = 40
+)
+
 func (m *dashModel) resizePanes() {
 	if !m.ready {
 		return
@@ -462,27 +476,39 @@ func (m *dashModel) resizePanes() {
 	hBord := 4
 	vBord := 2
 
-	// Layout: Tasks (left), Agents/Feed (center), Tokens (right)
 	tokensWidth := 0
 	if m.showTokensPane {
 		tokensWidth = tokenPaneWidth
+		if tokensWidth < minTokenPaneWidth {
+			tokensWidth = minTokenPaneWidth
+		}
 	}
 
 	leftWidth := 0
 	if m.showTasksPane {
 		leftWidth = (m.width * 30) / 100
+		if leftWidth < minTaskPaneWidth {
+			leftWidth = minTaskPaneWidth
+		}
 	}
 
 	centerWidth := m.width - leftWidth - tokensWidth
+	if centerWidth < minCenterPaneWidth {
+		centerWidth = minCenterPaneWidth
+	}
 
-	// Split center into Agents (top 45%) and Feed (bottom 55%)
 	agentsHeight := 0
 	if m.showAgentsPane {
 		agentsHeight = (m.height * 45) / 100
+		if agentsHeight < minAgentPaneHeight {
+			agentsHeight = minAgentPaneHeight
+		}
 	}
 
-	// Feed takes remaining space (minus footer)
 	feedHeight := m.height - agentsHeight - 3
+	if feedHeight < 5 {
+		feedHeight = 5
+	}
 
 	if m.showTasksPane {
 		m.taskList.SetSize(leftWidth-hBord, m.height-vBord-3)
@@ -714,23 +740,37 @@ func (m dashModel) View() string {
 	hBord := 4
 	vBord := 2
 
-	// Layout: [Tasks 30%] [Center: Agents/Feed] [Tokens 25]
 	tokensWidth := 0
 	if m.showTokensPane {
 		tokensWidth = tokenPaneWidth
+		if tokensWidth < minTokenPaneWidth {
+			tokensWidth = minTokenPaneWidth
+		}
 	}
 
 	taskWidth := 0
 	if m.showTasksPane {
 		taskWidth = (m.width * 30) / 100
+		if taskWidth < minTaskPaneWidth {
+			taskWidth = minTaskPaneWidth
+		}
 	}
 	centerWidth := m.width - taskWidth - tokensWidth
+	if centerWidth < minCenterPaneWidth {
+		centerWidth = minCenterPaneWidth
+	}
 
 	agentsHeight := 0
 	if m.showAgentsPane {
 		agentsHeight = (m.height * 45) / 100
+		if agentsHeight < minAgentPaneHeight {
+			agentsHeight = minAgentPaneHeight
+		}
 	}
 	feedHeight := m.height - agentsHeight - 3
+	if feedHeight < 5 {
+		feedHeight = 5
+	}
 
 	// Build each pane
 	var taskPane, agentPane, feedPane, tokenPane string

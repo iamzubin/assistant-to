@@ -21,6 +21,7 @@ var (
 	spawnModel  string
 	spawnRole   string
 	spawnPrompt string
+	spawnTool   string
 )
 
 var runCmd = &cobra.Command{
@@ -68,9 +69,17 @@ var runCmd = &cobra.Command{
 			conf = config.Default()
 		}
 
-		tool := conf.Tool
+		tool := spawnTool
 		if tool == "" {
-			tool = "gemini"
+			// Fall back to config tool, then role-specific runtime, then default
+			if conf != nil && conf.Tool != "" {
+				tool = conf.Tool
+			} else if conf != nil {
+				tool = conf.RuntimeForRole(spawnRole)
+			}
+			if tool == "" {
+				tool = "gemini"
+			}
 		}
 
 		model := spawnModel
@@ -367,6 +376,7 @@ func init() {
 	runCmd.Flags().StringVarP(&spawnModel, "model", "m", "", "Model for the agent to use (set to 'auto' to use last used model)")
 	runCmd.Flags().StringVarP(&spawnRole, "role", "r", "Builder", "Role of the agent (e.g., Builder, Reviewer)")
 	runCmd.Flags().StringVarP(&spawnPrompt, "prompt", "p", "", "Initial prompt or context for the agent")
+	runCmd.Flags().StringVarP(&spawnTool, "tool", "t", "", "Runtime tool to use (gemini, opencode) - defaults to config or role setting")
 
 	RootCmd.AddCommand(runCmd)
 	RootCmd.AddCommand(connectCmd)

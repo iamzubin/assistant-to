@@ -237,6 +237,18 @@ func Default() *Config {
 				AllowedTools: []string{"mail", "log", "worktree", "buffer"},
 				MCPPort:      0, // Use API.MCPPort (single MCP server for all roles)
 			},
+			"geminitest": {
+				Runtime:      "gemini",
+				Model:        "gemini-2.5-flash",
+				AllowedTools: []string{"mail", "log", "buffer"},
+				MCPPort:      0,
+			},
+			"opencodetest": {
+				Runtime:      "opencode",
+				Model:        "",
+				AllowedTools: []string{"mail", "log", "buffer"},
+				MCPPort:      0,
+			},
 		},
 	}
 }
