@@ -119,10 +119,10 @@ func (d *DB) GetTokenMetricsSummary() (map[string]interface{}, error) {
 
 	summary := map[string]interface{}{
 		"agent_count":             agentCount,
-		"total_tokens":            0,
-		"total_cost_usd":          0.0,
-		"total_prompt_tokens":     0,
-		"total_completion_tokens": 0,
+		"total_tokens":            int64(0),
+		"total_cost_usd":          float64(0.0),
+		"total_prompt_tokens":     int64(0),
+		"total_completion_tokens": int64(0),
 	}
 	if totalTokens.Valid {
 		summary["total_tokens"] = totalTokens.Int64
