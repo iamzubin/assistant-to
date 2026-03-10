@@ -37,14 +37,92 @@ type AgentStatus struct {
 
 type taskItem struct{ db.Task }
 
-func (t taskItem) Title() string {
-	if t.ParentID > 0 {
-		return fmt.Sprintf("[%d] ↳ %s (Parent:%d)", t.ID, t.Task.Title, t.ParentID)
+func priorityIndicator(p int) string {
+	switch p {
+	case 1:
+		return "🔥" // critical
+	case 2:
+		return "⚡" // high
+	case 3:
+		return "●" // normal
+	case 4:
+		return "○" // low
+	case 5:
+		return "◌" // trivial
+	default:
+		return "●"
 	}
-	return fmt.Sprintf("[%d] %s", t.ID, t.Task.Title)
 }
-func (t taskItem) Description() string { return fmt.Sprintf("Status: %s", t.Status) }
+
+func statusColor(s string) lipgloss.Color {
+	switch s {
+	case "complete":
+		return "#04B575" // green
+	case "failed":
+		return "#FF0000" // red
+	case "building", "merging":
+		return "#00BFFF" // blue
+	case "review":
+		return "#FFD700" // gold
+	case "scouted":
+		return "#9370DB" // purple
+	case "started":
+		return "#FFA500" // orange
+	default:
+		return "#A8A8A8" // gray
+	}
+}
+
+func (t taskItem) Title() string {
+	priority := priorityIndicator(t.Priority)
+	parentInfo := ""
+	if t.ParentID > 0 {
+		parentInfo = fmt.Sprintf(" ↳(P:%d)", t.ParentID)
+	}
+	return fmt.Sprintf("[%d] %s %s%s", t.ID, priority, t.Task.Title, parentInfo)
+}
+func (t taskItem) Description() string {
+	statusColored := lipgloss.NewStyle().Foreground(statusColor(t.Status)).Bold(true).Render(t.Status)
+
+	var descParts []string
+	descParts = append(descParts, fmt.Sprintf("Status: %s", statusColored))
+
+	if t.Task.Description != "" {
+		desc := t.Task.Description
+		if len(desc) > 60 {
+			desc = desc[:57] + "..."
+		}
+		descParts = append(descParts, fmt.Sprintf("Desc: %s", desc))
+	}
+
+	if t.Task.TargetFiles != "" {
+		files := t.Task.TargetFiles
+		if len(files) > 50 {
+			files = files[:47] + "..."
+		}
+		descParts = append(descParts, fmt.Sprintf("Files: %s", files))
+	}
+
+	age := time.Since(t.Task.CreatedAt)
+	ageStr := formatDuration(age)
+	descParts = append(descParts, fmt.Sprintf("Created: %s ago", ageStr))
+
+	return strings.Join(descParts, " • ")
+}
 func (t taskItem) FilterValue() string { return t.Task.Title }
+
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return "<1m"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
 
 type agentItem struct{ AgentStatus }
 
