@@ -36,17 +36,28 @@ var runCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Optionally create the worktree if it doesn't already exist
+		// Determine the working directory for the agent session
+		// Most agents (Builder, Scout, Reviewer) work in the task's worktree
+		// But Merger needs to run from the main repo to perform git merge
 		worktreeDir := filepath.Join(pwd, ".dwight", "worktrees", taskID)
 		if taskID == "Coordinator" {
 			worktreeDir = pwd
 		} else if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
-			fmt.Printf("Worktree not found, attempting to create it on 'main'...\n")
-			_, err = sandbox.CreateWorktree(pwd, taskID, "main", "")
-			if err != nil {
-				fmt.Printf("Failed to create worktree: %v\n", err)
-				os.Exit(1)
+			// Skip worktree creation for Merger - it runs from main repo
+			if spawnRole != "Merger" {
+				fmt.Printf("Worktree not found, attempting to create it on 'main'...\n")
+				_, err = sandbox.CreateWorktree(pwd, taskID, "main", "")
+				if err != nil {
+					fmt.Printf("Failed to create worktree: %v\n", err)
+					os.Exit(1)
+				}
 			}
+		}
+
+		// Determine session directory: Merger runs from main repo, others from worktree
+		sessionDir := worktreeDir
+		if spawnRole == "Merger" {
+			sessionDir = pwd
 		}
 
 		// Load config to determine the tool
@@ -267,7 +278,7 @@ var runCmd = &cobra.Command{
 
 		session := sandbox.TmuxSession{
 			SessionName: sessionName,
-			WorktreeDir: worktreeDir,
+			WorktreeDir: sessionDir,
 			Command:     agentCmd,
 			EnvVars: map[string]string{
 				"AT_MCP_PORT":                     fmt.Sprintf("%d", mcpPort),
