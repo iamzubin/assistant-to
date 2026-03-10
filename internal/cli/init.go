@@ -417,7 +417,14 @@ func runInit() error {
 		fmt.Printf("%s Generated MCP configuration files\n", successStyle.Render("✓"))
 	}
 
-	// Step 7: Gitignore
+	// Step 7: Create example OpenCode agents and Gemini skills
+	if err := createExampleAgentsAndSkills(); err != nil {
+		fmt.Printf("%s Warning: failed to create example agents/skills: %v\n", infoStyle.Render("!"), err)
+	} else {
+		fmt.Printf("%s Created example agents and skills\n", successStyle.Render("✓"))
+	}
+
+	// Step 8: Gitignore
 	var addToGitignore bool = false
 	err = huh.NewForm(
 		huh.NewGroup(
@@ -436,6 +443,7 @@ func runInit() error {
 		"mcp.json",
 		"opencode.json",
 		".gemini/",
+		".opencode/",
 		"mcp-configs/",
 	}
 
@@ -754,5 +762,331 @@ func appendMultipleToGitignore(entries []string) error {
 		contentStr += "\n" + entry
 		existing[entry] = true
 	}
+	return nil
+}
+
+func createExampleAgentsAndSkills() error {
+	if err := createExampleOpenCodeAgents(); err != nil {
+		return fmt.Errorf("failed to create example agents: %w", err)
+	}
+	if err := createExampleGeminiSkills(); err != nil {
+		return fmt.Errorf("failed to create example skills: %w", err)
+	}
+	return nil
+}
+
+func createExampleOpenCodeAgents() error {
+	agentsDir := ".opencode/agents"
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create agents directory: %w", err)
+	}
+
+	agents := []struct {
+		filename string
+		content  string
+	}{
+		{
+			filename: "builder.md",
+			content: `---
+description: Implements features and fixes based on task specifications
+mode: subagent
+tools: mail,log,buffer
+---
+
+You are a Builder agent. Your role is to implement code changes to complete tasks.
+
+## Guidelines
+
+- Understand the task requirements from the specification
+- Implement clean, maintainable code
+- Follow existing code patterns and conventions
+- Write tests for new functionality
+- Run build and test commands to verify changes
+- Commit your work when complete
+
+## Workflow
+
+1. Read the task specification
+2. Implement the required changes
+3. Write tests
+4. Verify with build/test commands
+5. Report completion`,
+		},
+		{
+			filename: "merger.md",
+			content: `---
+description: Merges completed work into the main branch and resolves conflicts
+mode: subagent
+tools: mail,log,worktree,buffer
+---
+
+You are a Merger agent. Your role is to integrate completed work into the main branch.
+
+## Guidelines
+
+- Review completed work in the task worktree
+- Ensure all tests pass
+- Resolve any merge conflicts
+- Run final verification before merging
+- Clean up worktree after successful merge
+- Use clear commit messages
+
+## Workflow
+
+1. Review the completed work
+2. Fetch latest main branch
+3. Merge or rebase as needed
+4. Resolve conflicts if any
+5. Run tests to verify
+6. Push changes
+7. Clean up worktree`,
+		},
+		{
+			filename: "coordinator.md",
+			content: `---
+description: Orchestrates multiple agents to complete complex tasks
+mode: subagent
+tools: mail,log,task,spawn,buffer,session,cleanup,worktree,dash
+---
+
+You are a Coordinator agent. Your role is to orchestrate task completion by managing sub-agents.
+
+## Guidelines
+
+- Break down complex tasks into smaller sub-tasks
+- Assign appropriate agents to each sub-task
+- Monitor progress and handle failures
+- Coordinate dependencies between tasks
+- Ensure overall quality and consistency
+
+## Workflow
+
+1. Analyze the task and create a plan
+2. Create sub-tasks for independent work
+3. Spawn appropriate agents for each sub-task
+4. Monitor progress and intervene if needed
+5. Aggregate results
+6. Verify complete task meets requirements`,
+		},
+		{
+			filename: "scout.md",
+			content: `---
+description: Explores codebase to find relevant code, patterns, and context
+mode: subagent
+tools: mail,log,buffer
+---
+
+You are a Scout agent. Your role is to explore the codebase and gather context.
+
+## Guidelines
+
+- Search for relevant code and files
+- Identify patterns and conventions
+- Find related tests and documentation
+- Provide concise, relevant findings
+- Use efficient search strategies
+
+## Techniques
+
+- Use grep/find to locate code patterns
+- Read relevant files to understand context
+- Identify file structure and organization
+- Find related tests and examples`,
+		},
+		{
+			filename: "reviewer.md",
+			content: `---
+description: Reviews code changes for quality, bugs, and best practices
+mode: subagent
+tools: mail,log,buffer
+---
+
+You are a Reviewer agent. Your role is to carefully review code changes and provide feedback.
+
+## Guidelines
+
+- Review code for bugs, security issues, and performance
+- Check for adherence to coding standards
+- Ensure proper error handling
+- Verify tests are adequate
+- Provide specific, actionable feedback
+
+## Output Format
+
+1. Summary of changes
+2. Issues found (severity: critical/major/minor)
+3. Suggestions for improvement
+4. Approval or request changes`,
+		},
+	}
+
+	for _, agent := range agents {
+		path := filepath.Join(agentsDir, agent.filename)
+		if err := os.WriteFile(path, []byte(agent.content), 0644); err != nil {
+			return fmt.Errorf("failed to write %s: %w", agent.filename, err)
+		}
+	}
+
+	return nil
+}
+
+func createExampleGeminiSkills() error {
+	skillsDir := ".gemini/skills"
+	if err := os.MkdirAll(skillsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create skills directory: %w", err)
+	}
+
+	skills := []struct {
+		dirname string
+		skillMD string
+	}{
+		{
+			dirname: "builder",
+			skillMD: `# Builder Skill
+
+Implements features and fixes based on task specifications.
+
+## Workflow
+
+1. Understand task requirements from specification
+2. Implement clean, maintainable code
+3. Follow existing code patterns and conventions
+4. Write tests for new functionality
+5. Run build and test commands to verify changes
+6. Report completion
+
+## Guidelines
+
+- Use appropriate frameworks and libraries
+- Keep functions focused and small
+- Add comments for complex logic
+- Ensure error handling`,
+		},
+		{
+			dirname: "merger",
+			skillMD: `# Merger Skill
+
+Merges completed work into the main branch.
+
+## Workflow
+
+1. Review completed work in task worktree
+2. Fetch latest main branch
+3. Merge or rebase as needed
+4. Resolve conflicts if any
+5. Run tests to verify
+6. Push changes
+7. Clean up worktree
+
+## Guidelines
+
+- Verify all tests pass before merging
+- Write clear commit messages
+- Handle merge conflicts carefully
+- Ensure no regressions`,
+		},
+		{
+			dirname: "coordinator",
+			skillMD: `# Coordinator Skill
+
+Orchestrates multiple agents to complete complex tasks.
+
+## Workflow
+
+1. Analyze task and create a plan
+2. Break into smaller sub-tasks
+3. Spawn appropriate agents for each
+4. Monitor progress
+5. Aggregate results
+6. Verify complete task
+
+## Guidelines
+
+- Assign correct agents to sub-tasks
+- Handle dependencies between tasks
+- Monitor for failures
+- Ensure quality across all work`,
+		},
+		{
+			dirname: "scout",
+			skillMD: `# Scout Skill
+
+Explores codebase to find relevant code and context.
+
+## Techniques
+
+- Use grep/find to locate patterns
+- Read relevant files for context
+- Identify file structure
+- Find related tests
+
+## Guidelines
+
+- Be thorough in search
+- Provide concise findings
+- Include file paths and line numbers
+- Identify patterns and conventions`,
+		},
+		{
+			dirname: "reviewer",
+			skillMD: `# Reviewer Skill
+
+Reviews code changes for quality and correctness.
+
+## Checklist
+
+- Bug detection
+- Security issues
+- Performance problems
+- Code style adherence
+- Error handling
+- Test coverage
+
+## Output
+
+1. Summary of changes
+2. Issues by severity
+3. Suggestions
+4. Approval status`,
+		},
+		{
+			dirname: "debug",
+			skillMD: `# Debug Helper
+
+Helps diagnose and fix bugs.
+
+## Capabilities
+
+- Analyze error messages and stack traces
+- Suggest potential causes
+- Recommend debugging strategies
+- Create minimal reproduction cases`,
+		},
+		{
+			dirname: "refactor",
+			skillMD: `# Refactoring Assistant
+
+Improves code structure and design.
+
+## Guidelines
+
+- Identify code smells
+- Suggest refactoring opportunities
+- Maintain existing behavior
+- Prioritize readability`,
+		},
+	}
+
+	for _, skill := range skills {
+		skillPath := filepath.Join(skillsDir, skill.dirname)
+		if err := os.MkdirAll(skillPath, 0755); err != nil {
+			return fmt.Errorf("failed to create skill directory %s: %w", skill.dirname, err)
+		}
+		skillFilePath := filepath.Join(skillPath, "SKILL.md")
+		if err := os.WriteFile(skillFilePath, []byte(skill.skillMD), 0644); err != nil {
+			return fmt.Errorf("failed to write SKILL.md for %s: %w", skill.dirname, err)
+		}
+	}
+
 	return nil
 }
