@@ -241,6 +241,18 @@ func (c *Coordinator) processTasks(ctx context.Context, tasks []db.Task) error {
 		c.watchForMerge(ctx)
 	}()
 
+	// Start automatic cleanup goroutine if enabled
+	if c.Config.IsCleanupEnabled() {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			c.runCleanupLoop(ctx)
+		}()
+		config.Info("Coordinator: Automatic cleanup enabled (interval: %v)", c.Config.GetCleanupInterval())
+	} else {
+		config.Debug("Coordinator: Automatic cleanup disabled")
+	}
+
 	// Wait for context cancellation (shutdown signal)
 	<-ctx.Done()
 	log.Println("Coordinator: shutting down...")
@@ -716,6 +728,176 @@ func (c *Coordinator) watchForMerge(ctx context.Context) {
 				} else {
 					c.mergerSpawned = true
 					return // Stop watching after spawning
+				}
+			}
+		}
+	}
+}
+
+// runCleanupLoop periodically cleans up completed tasks and orphan sessions
+func (c *Coordinator) runCleanupLoop(ctx context.Context) {
+	ticker := time.NewTicker(c.Config.GetCleanupInterval())
+	defer ticker.Stop()
+
+	config.Info("Coordinator: Starting cleanup loop (interval: %v, completed delay: %v, orphan timeout: %v)",
+		c.Config.GetCleanupInterval(), c.Config.GetCleanupCompletedDelay(), c.Config.GetCleanupOrphanTimeout())
+
+	for {
+		select {
+		case <-ctx.Done():
+			config.Info("Coordinator: Cleanup loop stopping due to context cancellation")
+			return
+		case <-ticker.C:
+			c.performCleanup()
+		}
+	}
+}
+
+// performCleanup performs cleanup of completed tasks and orphan sessions
+func (c *Coordinator) performCleanup() {
+	prefix := sandbox.ProjectPrefix(c.PWD)
+	completedDelay := c.Config.GetCleanupCompletedDelay()
+	orphanTimeout := c.Config.GetCleanupOrphanTimeout()
+
+	// Get all tasks
+	tasks, err := c.DB.ListTasksByStatus("")
+	if err != nil {
+		config.Error("Coordinator: Failed to list tasks for cleanup: %v", err)
+		return
+	}
+
+	worktreesDir := c.Config.GetWorktreesDir(c.PWD)
+	now := time.Now()
+	cleanedCount := 0
+
+	for _, task := range tasks {
+		taskID := strconv.Itoa(task.ID)
+
+		// Skip non-complete tasks
+		if task.Status != db.TaskStatusComplete && task.Status != db.TaskStatusFailed &&
+			task.Status != db.TaskStatusMerging && task.Status != db.TaskStatusReview {
+			continue
+		}
+
+		// Check if task has been in complete/failed state long enough
+		if task.UpdatedAt.Add(completedDelay).After(now) {
+			continue
+		}
+
+		// Kill the tmux session if it exists
+		sessionName := prefix + taskID
+		session := &sandbox.TmuxSession{SessionName: sessionName}
+		if session.HasSession() {
+			if err := session.Kill(); err != nil {
+				config.Debug("Coordinator: Failed to kill session %s: %v", sessionName, err)
+			} else {
+				config.Info("Coordinator: Killed session %s for task %s", sessionName, taskID)
+			}
+		}
+
+		// Also check for scout session
+		scoutSessionName := prefix + "scout-" + taskID
+		scoutSession := &sandbox.TmuxSession{SessionName: scoutSessionName}
+		if scoutSession.HasSession() {
+			if err := scoutSession.Kill(); err != nil {
+				config.Debug("Coordinator: Failed to kill scout session %s: %v", scoutSessionName, err)
+			} else {
+				config.Info("Coordinator: Killed scout session %s for task %s", scoutSessionName, taskID)
+			}
+		}
+
+		// Teardown the worktree
+		if err := sandbox.TeardownWorktree(taskID, c.PWD, worktreesDir); err != nil {
+			config.Debug("Coordinator: Failed to teardown worktree for task %s: %v", taskID, err)
+		} else {
+			config.Info("Coordinator: Cleaned up worktree for task %s", taskID)
+			cleanedCount++
+		}
+	}
+
+	// Clean up orphan sessions (sessions without corresponding active tasks)
+	c.cleanupOrphanSessions(prefix, orphanTimeout)
+
+	if cleanedCount > 0 {
+		config.Info("Coordinator: Cleanup completed, cleaned %d tasks", cleanedCount)
+	}
+}
+
+// cleanupOrphanSessions removes tmux sessions that are no longer associated with active tasks
+func (c *Coordinator) cleanupOrphanSessions(prefix string, orphanTimeout time.Duration) {
+	// Get all tmux sessions for this project
+	sessions, err := sandbox.ListSessions(prefix)
+	if err != nil {
+		config.Debug("Coordinator: Failed to list sessions: %v", err)
+		return
+	}
+
+	// Get all tasks
+	tasks, err := c.DB.ListTasksByStatus("")
+	if err != nil {
+		config.Debug("Coordinator: Failed to list tasks for orphan cleanup: %v", err)
+		return
+	}
+
+	// Build a set of active task IDs
+	activeTasks := make(map[string]bool)
+	for _, task := range tasks {
+		taskID := strconv.Itoa(task.ID)
+		// Tasks that should have active sessions
+		if task.Status == db.TaskStatusPending || task.Status == db.TaskStatusStarted ||
+			task.Status == db.TaskStatusBuilding || task.Status == db.TaskStatusScouted ||
+			task.Status == db.TaskStatusReview || task.Status == db.TaskStatusMerging {
+			activeTasks[taskID] = true
+			activeTasks["scout-"+taskID] = true
+		}
+	}
+
+	for _, session := range sessions {
+		// Skip known persistent sessions
+		if session == "merger" || session == "coordinator" || strings.HasPrefix(session, "monitor") {
+			continue
+		}
+
+		// Check if this is an active task session
+		if activeTasks[session] {
+			continue
+		}
+
+		// This is an orphan session - try to kill it
+		sessionName := prefix + session
+		tmuxSession := &sandbox.TmuxSession{SessionName: sessionName}
+
+		if tmuxSession.HasSession() {
+			// Get session info to check age (approximate)
+			config.Info("Coordinator: Found orphan session %s, killing...", sessionName)
+			if err := tmuxSession.Kill(); err != nil {
+				config.Debug("Coordinator: Failed to kill orphan session %s: %v", sessionName, err)
+			} else {
+				config.Info("Coordinator: Killed orphan session %s", sessionName)
+			}
+		}
+
+		// Try to extract task ID and cleanup worktree
+		taskID := strings.TrimPrefix(session, "scout-")
+		if taskID != session {
+			// Was a scout session
+			taskID = strings.TrimPrefix(taskID, "builder-")
+		} else {
+			taskID = strings.TrimPrefix(taskID, "builder-")
+		}
+
+		// Try to parse as integer to verify it's a task session
+		if _, err := strconv.Atoi(taskID); err == nil {
+			// Check if task is complete/failed
+			taskIDInt, _ := strconv.Atoi(taskID)
+			task, err := c.DB.GetTaskByID(taskIDInt)
+			if err == nil && (task.Status == db.TaskStatusComplete || task.Status == db.TaskStatusFailed) {
+				// Task is done, cleanup worktree
+				worktreesDir := c.Config.GetWorktreesDir(c.PWD)
+				if err := sandbox.TeardownWorktree(taskID, c.PWD, worktreesDir); err != nil {
+					config.Debug("Coordinator: Failed to teardown orphan worktree for task %s: %v", taskID, err)
+				} else {
+					config.Info("Coordinator: Cleaned up orphan worktree for task %s", taskID)
 				}
 			}
 		}

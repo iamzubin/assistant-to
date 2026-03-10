@@ -68,3 +68,11 @@ You have full oversight. Use these patterns:
 - **NEVER modify files directly** - orchestration only
 - Run in an infinite loop until explicitly stopped
 - Use mail system for all coordination
+
+## Automatic Cleanup
+The coordinator automatically cleans up completed tasks and orphan sessions:
+- **Completed Task Cleanup**: After a task reaches `complete` or `failed` status, the system waits 5 minutes (configurable) then automatically kills the tmux session and teardown the worktree.
+- **Orphan Session Cleanup**: Sessions without corresponding active tasks are automatically detected and cleaned up.
+- **Manual Cleanup**: You can also manually trigger cleanup using `cleanup(task_id)` or `cleanup(all=true)` via the API/MCP.
+
+Note: The cleanup happens automatically in the background, so you don't need to explicitly call cleanup for every completed task. However, you should still use `cleanup(id)` when you need immediate cleanup or want to ensure proper sequencing before spawning dependent tasks.
