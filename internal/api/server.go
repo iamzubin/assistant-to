@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"assistant-to/internal/config"
 	"assistant-to/internal/db"
+	"assistant-to/internal/metrics"
 	"assistant-to/internal/sandbox"
 )
 
@@ -57,6 +59,10 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/worktree/merge", s.handleWorktreeMerge)
 	mux.HandleFunc("/api/worktree/teardown", s.handleWorktreeTeardown)
 	mux.HandleFunc("/api/config", s.handleConfig)
+	mux.HandleFunc("/api/tokens", s.handleTokens)
+	mux.HandleFunc("/api/tokens/summary", s.handleTokensSummary)
+	mux.HandleFunc("/api/tokens/top", s.handleTokensTop)
+	mux.HandleFunc("/api/tokens/extract", s.handleTokensExtract)
 
 	s.httpServer = &http.Server{
 		Addr:    addr,
@@ -514,4 +520,127 @@ func (s *Server) handleWorktreeTeardown(w http.ResponseWriter, r *http.Request) 
 func (s *Server) jsonResponse(w http.ResponseWriter, resp APIResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleTokens(w http.ResponseWriter, r *http.Request) {
+	agentID := r.URL.Query().Get("agent_id")
+
+	if agentID != "" {
+		metrics, err := s.db.GetTokenMetricsByAgent(agentID)
+		if err != nil {
+			s.jsonResponse(w, APIResponse{Success: false, Error: err.Error()})
+			return
+		}
+		if metrics == nil {
+			s.jsonResponse(w, APIResponse{Success: true, Data: []struct{}{}})
+			return
+		}
+		s.jsonResponse(w, APIResponse{Success: true, Data: metrics})
+		return
+	}
+
+	metrics, err := s.db.GetAllTokenMetrics()
+	if err != nil {
+		s.jsonResponse(w, APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, APIResponse{Success: true, Data: metrics})
+}
+
+func (s *Server) handleTokensSummary(w http.ResponseWriter, r *http.Request) {
+	summary, err := s.db.GetTokenMetricsSummary()
+	if err != nil {
+		s.jsonResponse(w, APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, APIResponse{Success: true, Data: summary})
+}
+
+func (s *Server) handleTokensTop(w http.ResponseWriter, r *http.Request) {
+	limit := 10
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	metrics, err := s.db.GetTopTokenConsumers(limit)
+	if err != nil {
+		s.jsonResponse(w, APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, APIResponse{Success: true, Data: metrics})
+}
+
+func (s *Server) handleTokensExtract(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.jsonResponse(w, APIResponse{Success: false, Error: "POST only"})
+		return
+	}
+
+	var req struct {
+		AgentID string `json:"agent_id"`
+		Lines   int    `json:"lines"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	if req.AgentID == "" {
+		s.jsonResponse(w, APIResponse{Success: false, Error: "agent_id required"})
+		return
+	}
+
+	if req.Lines <= 0 {
+		req.Lines = 500
+	}
+
+	sessionName := s.prefix + req.AgentID
+	session := &sandbox.TmuxSession{SessionName: sessionName}
+
+	if !session.HasSession() {
+		s.jsonResponse(w, APIResponse{Success: false, Error: "session not found"})
+		return
+	}
+
+	transcript, err := session.CaptureBuffer(req.Lines)
+	if err != nil {
+		s.jsonResponse(w, APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	parsedMetrics := metrics.ParseTokenMetrics(transcript)
+	if parsedMetrics == nil {
+		s.jsonResponse(w, APIResponse{Success: true, Data: map[string]interface{}{"extracted": false}})
+		return
+	}
+
+	if parsedMetrics.CostUSD == 0 && parsedMetrics.TotalTokens > 0 {
+		parsedMetrics.CostUSD = metrics.CalculateCost(parsedMetrics.PromptTokens, parsedMetrics.CompletionTokens, parsedMetrics.Model)
+	}
+
+	taskID, _ := strconv.ParseInt(req.AgentID, 10, 64)
+	var taskIDPtr *int64
+	if taskID > 0 {
+		taskIDPtr = &taskID
+	}
+
+	err = s.db.RecordTokenMetrics(req.AgentID, taskIDPtr, parsedMetrics.PromptTokens, parsedMetrics.CompletionTokens, parsedMetrics.CostUSD, parsedMetrics.Model)
+	if err != nil {
+		s.jsonResponse(w, APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, APIResponse{Success: true, Data: map[string]interface{}{
+		"extracted":         true,
+		"prompt_tokens":     parsedMetrics.PromptTokens,
+		"completion_tokens": parsedMetrics.CompletionTokens,
+		"total_tokens":      parsedMetrics.TotalTokens,
+		"cost_usd":          parsedMetrics.CostUSD,
+		"model":             parsedMetrics.Model,
+	}})
 }

@@ -74,12 +74,28 @@ func (d *DB) InitSchema() error {
 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS token_metrics (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		agent_id TEXT NOT NULL,
+		task_id INTEGER,
+		prompt_tokens INTEGER DEFAULT 0,
+		completion_tokens INTEGER DEFAULT 0,
+		total_tokens INTEGER DEFAULT 0,
+		cost_usd REAL DEFAULT 0,
+		model TEXT,
+		session_count INTEGER DEFAULT 1,
+		last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_mail_recipient ON mail(recipient);
 	CREATE INDEX IF NOT EXISTS idx_mail_type ON mail(type);
 	CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 	CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id);
 	CREATE INDEX IF NOT EXISTS idx_expertise_domain ON expertise(domain);
 	CREATE INDEX IF NOT EXISTS idx_expertise_type ON expertise(type);
+	CREATE INDEX IF NOT EXISTS idx_token_metrics_agent ON token_metrics(agent_id);
+	CREATE INDEX IF NOT EXISTS idx_token_metrics_task ON token_metrics(task_id);
 	`
 	_, err := d.Exec(schema)
 	if err != nil {
