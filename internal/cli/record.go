@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"assistant-to/internal/db"
+	"dwight/internal/db"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -36,7 +36,7 @@ This knowledge is automatically loaded by 'dwight prime' before agents start wor
 			os.Exit(1)
 		}
 
-		dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
+		dbPath := filepath.Join(pwd, ".dwight", "state.db")
 		database, err := db.Open(dbPath)
 		if err != nil {
 			fmt.Printf("Failed to open database: %v\n", err)

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"assistant-to/internal/db"
-	"assistant-to/internal/sandbox"
+	"dwight/internal/db"
+	"dwight/internal/sandbox"
 )
 
 // AIAssistedResolution handles Tier 4: spawning a Merger agent to resolve conflicts
@@ -163,7 +163,7 @@ func (a *AIAssistedResolution) getConflictContent(file string) (string, error) {
 // createResolutionWorktree creates an isolated worktree for the Merger agent
 func (a *AIAssistedResolution) createResolutionWorktree() (string, error) {
 	resolutionID := fmt.Sprintf("merger-%s-%d", a.TaskID, time.Now().Unix())
-	worktreeDir := filepath.Join(a.PWD, ".assistant-to", "worktrees", resolutionID)
+	worktreeDir := filepath.Join(a.PWD, ".dwight", "worktrees", resolutionID)
 
 	_, err := sandbox.CreateWorktree(a.PWD, resolutionID, a.BaseBranch, "")
 	if err != nil {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"assistant-to/internal/config"
+	"dwight/internal/config"
 )
 
 func TestEscalationLevels(t *testing.T) {

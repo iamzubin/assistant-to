@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"assistant-to/internal/sandbox"
+	"dwight/internal/sandbox"
 
 	"github.com/spf13/cobra"
 )

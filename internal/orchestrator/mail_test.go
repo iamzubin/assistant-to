@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"assistant-to/internal/db"
+	"dwight/internal/db"
 )
 
 func setupTestDB(t *testing.T) *db.DB {

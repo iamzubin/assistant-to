@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"assistant-to/internal/api"
-	"assistant-to/internal/config"
-	"assistant-to/internal/db"
-	"assistant-to/internal/merge"
-	"assistant-to/internal/sandbox"
-	"assistant-to/internal/tasking"
+	"dwight/internal/api"
+	"dwight/internal/config"
+	"dwight/internal/db"
+	"dwight/internal/merge"
+	"dwight/internal/sandbox"
+	"dwight/internal/tasking"
 )
 
 // Coordinator manages the agent swarm by reading tasks from the DB
@@ -39,7 +39,7 @@ type Coordinator struct {
 
 // NewCoordinator creates a Coordinator, loading config and prompts from the project root.
 func NewCoordinator(pwd string) (*Coordinator, error) {
-	configPath := filepath.Join(pwd, ".assistant-to", "config.yaml")
+	configPath := filepath.Join(pwd, ".dwight", "config.yaml")
 	conf, err := config.Load(configPath)
 	if err != nil {
 		log.Printf("Warning: failed to load config, using defaults: %v", err)
@@ -50,14 +50,14 @@ func NewCoordinator(pwd string) (*Coordinator, error) {
 	config.InitLogging(conf)
 	config.Debug("Coordinator initialized with verbose=%v", conf.Logging.Verbose)
 
-	dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
+	dbPath := filepath.Join(pwd, ".dwight", "state.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open state database: %w", err)
 	}
 
-	// Look for prompts directory in the project's .assistant-to dir, then next to the binary.
-	promptsPath := filepath.Join(pwd, ".assistant-to", "prompts")
+	// Look for prompts directory in the project's .dwight dir, then next to the binary.
+	promptsPath := filepath.Join(pwd, ".dwight", "prompts")
 	if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
 		// Fallback: look relative to this source file's package (dev mode)
 		promptsPath = filepath.Join(pwd, "internal", "orchestrator", "prompts")
@@ -923,7 +923,7 @@ func (c *Coordinator) spawnMerger(ctx context.Context) error {
 	tool := c.Config.RuntimeForRole("merger")
 	model := c.Config.ModelForRole("merger")
 
-	promptsPath := filepath.Join(mainBranchPath, ".assistant-to", "prompts")
+	promptsPath := filepath.Join(mainBranchPath, ".dwight", "prompts")
 	if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
 		promptsPath = filepath.Join(mainBranchPath, "internal", "orchestrator", "prompts")
 	}
@@ -1244,7 +1244,7 @@ func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID strin
 	opencodeConfig := map[string]interface{}{
 		"$schema": "https://opencode.ai/config.json",
 		"mcp": map[string]interface{}{
-			"assistant-to": map[string]interface{}{
+			"dwight": map[string]interface{}{
 				"type":    "local",
 				"command": []string{exePath, "mcp", "serve"},
 				"enabled": true,
@@ -1270,7 +1270,7 @@ func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID strin
 	// Generate Gemini settings.json (correct format per https://geminicli.com/docs/tools/mcp-server/)
 	geminiConfig := map[string]interface{}{
 		"mcpServers": map[string]interface{}{
-			"assistant-to": map[string]interface{}{
+			"dwight": map[string]interface{}{
 				"command": exePath,
 				"args":    []string{"mcp", "serve"},
 				"env": map[string]string{
@@ -1298,7 +1298,7 @@ func (c *Coordinator) generateWorktreeMCPConfigs(worktreeDir, role, taskID strin
 
 	// Generate generic mcp.json
 	mcpConfig := map[string]interface{}{
-		"name":        "assistant-to",
+		"name":        "dwight",
 		"description": fmt.Sprintf("Assistant-to %s agent MCP server", role),
 		"transport":   "stdio",
 		"command":     exePath,

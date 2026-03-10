@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"assistant-to/internal/db"
-	"assistant-to/internal/sandbox"
+	"dwight/internal/db"
+	"dwight/internal/sandbox"
 )
 
 // Tier1Watchdog performs AI triage on stalled agents
@@ -424,14 +424,14 @@ func (t *Tier1Watchdog) SpawnScoutAgent(ctx context.Context, agentID string, tra
 
 	// Create a temporary worktree for the Scout
 	scoutID := fmt.Sprintf("scout-triage-%d", time.Now().Unix())
-	worktreeDir := filepath.Join(t.PWD, ".assistant-to", "worktrees", scoutID)
+	worktreeDir := filepath.Join(t.PWD, ".dwight", "worktrees", scoutID)
 
 	// For now, we'll just log this - full implementation would spawn an actual agent
 	log.Printf("Tier1: Would spawn Scout agent %s in %s to analyze transcript (%d bytes)",
 		scoutID, worktreeDir, len(transcript))
 
 	// Write transcript to file for analysis
-	transcriptPath := filepath.Join(t.PWD, ".assistant-to", fmt.Sprintf("triage-%s.txt", agentID))
+	transcriptPath := filepath.Join(t.PWD, ".dwight", fmt.Sprintf("triage-%s.txt", agentID))
 	err := os.WriteFile(transcriptPath, []byte(transcript), 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write transcript: %w", err)

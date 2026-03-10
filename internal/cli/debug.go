@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"assistant-to/internal/db"
-	"assistant-to/internal/sandbox"
+	"dwight/internal/db"
+	"dwight/internal/sandbox"
 
 	"github.com/spf13/cobra"
 )
@@ -192,7 +192,7 @@ Examples:
 var sessionListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all active agent tmux sessions",
-	Long: `Lists all running assistant-to tmux sessions with their status.
+	Long: `Lists all running dwight tmux sessions with their status.
 Shows agent ID, session name, and basic info.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		pwd, err := findProjectRoot()
@@ -210,7 +210,7 @@ Shows agent ID, session name, and basic info.`,
 		}
 
 		if len(sessions) == 0 {
-			fmt.Println("No active assistant-to sessions found.")
+			fmt.Println("No active dwight sessions found.")
 			return
 		}
 
@@ -246,7 +246,7 @@ Use --all to clean up all completed tasks.`,
 			os.Exit(1)
 		}
 
-		dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
+		dbPath := filepath.Join(pwd, ".dwight", "state.db")
 		database, err := db.Open(dbPath)
 		if err != nil {
 			fmt.Printf("Failed to open database: %v\n", err)

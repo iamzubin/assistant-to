@@ -13,7 +13,7 @@ import (
 // Returns the absolute path to the created worktree directory.
 func CreateWorktree(repoDir string, taskID string, baseBranch string, worktreesDir string) (string, error) {
 	if worktreesDir == "" {
-		worktreesDir = filepath.Join(repoDir, ".assistant-to", "worktrees")
+		worktreesDir = filepath.Join(repoDir, ".dwight", "worktrees")
 	}
 	worktreeDir := filepath.Join(worktreesDir, taskID)
 	branchName := "at-" + taskID
@@ -65,7 +65,7 @@ func MergeWorktree(taskID string, baseBranch string, repoDir string) error {
 // TeardownWorktree removes the worktree and deletes the associated branch.
 func TeardownWorktree(taskID string, repoDir string, worktreesDir string) error {
 	if worktreesDir == "" {
-		worktreesDir = filepath.Join(repoDir, ".assistant-to", "worktrees")
+		worktreesDir = filepath.Join(repoDir, ".dwight", "worktrees")
 	}
 	worktreeDir := filepath.Join(worktreesDir, taskID)
 	branchName := "at-" + taskID
@@ -89,7 +89,7 @@ func TeardownWorktree(taskID string, repoDir string, worktreesDir string) error 
 // TeardownAllWorktrees removes all managed worktrees and their associated branches.
 func TeardownAllWorktrees(repoDir string, worktreesDir string) error {
 	if worktreesDir == "" {
-		worktreesDir = filepath.Join(repoDir, ".assistant-to", "worktrees")
+		worktreesDir = filepath.Join(repoDir, ".dwight", "worktrees")
 	}
 	entries, err := os.ReadDir(worktreesDir)
 	if err != nil {

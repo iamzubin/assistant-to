@@ -11,7 +11,7 @@ func setupTestDB(t *testing.T) (*DB, string) {
 	t.Helper()
 
 	// Create a temporary directory for the test database
-	dir, err := os.MkdirTemp("", "assistant-to-db-test")
+	dir, err := os.MkdirTemp("", "dwight-db-test")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}

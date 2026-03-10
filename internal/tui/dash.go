@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"assistant-to/internal/db"
-	"assistant-to/internal/sandbox"
+	"dwight/internal/db"
+	"dwight/internal/sandbox"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"

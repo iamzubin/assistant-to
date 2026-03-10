@@ -1,6 +1,6 @@
 # Assistant-to Roadmap & Implementation Plan
 
-This document defines the strategic roadmap for `assistant-to`, evolving it from a task runner into a sophisticated multi-agent orchestration swarm inspired by the Overstory ecosystem.
+This document defines the strategic roadmap for `dwight`, evolving it from a task runner into a sophisticated multi-agent orchestration swarm inspired by the Overstory ecosystem.
 
 ## 📊 Current Status
 - **Foundation**: ✅ COMPLETED (Database, Basic CLI, Multi-instance support)
@@ -29,7 +29,7 @@ This document defines the strategic roadmap for `assistant-to`, evolving it from
 ## 🧬 Phase 3: Blueprints & Expertise
 *Focus: Structured context and environment configuration.*
 
-- [ ] **Project-Level Blueprints**: Support `.assistant-to/blueprints/` directory for project-specific agent overlays.
+- [ ] **Project-Level Blueprints**: Support `.dwight/blueprints/` directory for project-specific agent overlays.
 - [ ] **Prompt Inheritance**: Implement Canopy-style inheritance in `PromptComposer` (e.g., `PythonBuilder` extends `BaseBuilder`).
 - [ ] **Expertise Injection**: Automatically prime agents with relevant `expertise` records from the DB based on the files they are touching.
 

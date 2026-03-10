@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"assistant-to/internal/config"
-	"assistant-to/internal/db"
-	"assistant-to/internal/sandbox"
-	"assistant-to/internal/tasking"
+	"dwight/internal/config"
+	"dwight/internal/db"
+	"dwight/internal/sandbox"
+	"dwight/internal/tasking"
 )
 
 type MCPServer struct {
@@ -326,7 +326,7 @@ func (s *MCPServer) ProcessRequest(req MCPRequest) *MCPResponse {
 		resp.Result = map[string]interface{}{
 			"protocolVersion": "2024-11-05",
 			"serverInfo": map[string]string{
-				"name":    "assistant-to",
+				"name":    "dwight",
 				"version": "1.0.0",
 			},
 			"capabilities": map[string]interface{}{
@@ -544,7 +544,7 @@ func (s *MCPServer) handleTaskAdd(params json.RawMessage) (interface{}, error) {
 	}
 
 	// Ensure specs directory exists
-	specsDir := filepath.Join(s.pwd, ".assistant-to", "specs")
+	specsDir := filepath.Join(s.pwd, ".dwight", "specs")
 	if err := os.MkdirAll(specsDir, 0755); err != nil {
 		s.db.RemoveTask(int(taskID))
 		return nil, fmt.Errorf("failed to create specs directory: %w", err)

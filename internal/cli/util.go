@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-// findProjectRoot looks for the .assistant-to directory
+// findProjectRoot looks for the .dwight directory
 // starting from the current directory and moving up.
 func findProjectRoot() (string, error) {
 	dir, err := os.Getwd()
@@ -15,13 +15,13 @@ func findProjectRoot() (string, error) {
 	}
 
 	for {
-		if _, err := os.Stat(filepath.Join(dir, ".assistant-to")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, ".dwight")); err == nil {
 			return dir, nil
 		}
 
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", errors.New(".assistant-to directory not found in any parent directories")
+			return "", errors.New(".dwight directory not found in any parent directories")
 		}
 		dir = parent
 	}

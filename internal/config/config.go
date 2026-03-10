@@ -154,8 +154,8 @@ func Default() *Config {
 			CanonicalBranch: "main",
 		},
 		Agents: AgentsConfig{
-			ManifestPath:   ".assistant-to/agent-manifest.json",
-			BaseDir:        ".assistant-to/agent-defs",
+			ManifestPath:   ".dwight/agent-manifest.json",
+			BaseDir:        ".dwight/agent-defs",
 			MaxConcurrent:  5,
 			StaggerDelayMs: 2000,
 			MaxDepth:       2,
@@ -163,7 +163,7 @@ func Default() *Config {
 			ScoutWaitSec:   600, // 10 minutes
 		},
 		Worktrees: WorktreesConfig{
-			BaseDir: ".assistant-to/worktrees",
+			BaseDir: ".dwight/worktrees",
 		},
 		TaskTracker: TaskTrackerConfig{
 			Enabled: true,
@@ -391,7 +391,7 @@ func (c *Config) GetWorktreesDir(projectRoot string) string {
 	if c.Worktrees.BaseDir != "" {
 		return filepath.Join(projectRoot, c.Worktrees.BaseDir)
 	}
-	return filepath.Join(projectRoot, ".assistant-to", "worktrees")
+	return filepath.Join(projectRoot, ".dwight", "worktrees")
 }
 
 // GetAgentsBaseDir returns the agents base directory path
@@ -399,7 +399,7 @@ func (c *Config) GetAgentsBaseDir(projectRoot string) string {
 	if c.Agents.BaseDir != "" {
 		return filepath.Join(projectRoot, c.Agents.BaseDir)
 	}
-	return filepath.Join(projectRoot, ".assistant-to", "agent-defs")
+	return filepath.Join(projectRoot, ".dwight", "agent-defs")
 }
 
 // IsReimagineEnabled returns whether reimagine merge strategy is enabled
@@ -481,7 +481,7 @@ func (c *Config) Save(path string) error {
 
 	// Add header comment
 	header := "# Assistant-to Configuration\n" +
-		"# See: https://github.com/assistant-to/assistant-to\n\n"
+		"# See: https://github.com/dwight/dwight\n\n"
 
 	if err := os.WriteFile(path, []byte(header+string(data)), 0644); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)

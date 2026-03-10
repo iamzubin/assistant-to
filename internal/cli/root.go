@@ -10,7 +10,7 @@ import (
 
 var RootCmd = &cobra.Command{
 	Use:   "dwight",
-	Short: "assistant-to: The Managing Director's Autonomous Coding Swarm",
+	Short: "dwight: The Managing Director's Autonomous Coding Swarm",
 	Long:  `A strictly bound, multi-agent orchestrator shipped as a single compiled Go binary.`,
 }
 

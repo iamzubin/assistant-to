@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"assistant-to/internal/db"
-	"assistant-to/internal/tasking"
+	"dwight/internal/db"
+	"dwight/internal/tasking"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
@@ -24,7 +24,7 @@ var taskCmd = &cobra.Command{
 var taskAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Interactively add a new task to the queue",
-	Long:  `Presents an interactive form to define a new workload for the agents, writing the resulting specification to the .assistant-to/specs directory and enqueueing it in the state database.`,
+	Long:  `Presents an interactive form to define a new workload for the agents, writing the resulting specification to the .dwight/specs directory and enqueueing it in the state database.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		parentID, _ := cmd.Flags().GetInt("parent-id")
 		return runTaskAdd(parentID)
@@ -115,7 +115,7 @@ func runTaskAdd(parentID int) error {
 	successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575")).Bold(true)
 	infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ADD8"))
 
-	fmt.Println(headerStyle.Render("assistant-to: New Task"))
+	fmt.Println(headerStyle.Render("dwight: New Task"))
 	fmt.Println(subHeaderStyle.Render("Define a new work item for the autonomous coding swarm."))
 
 	// Interactive form
@@ -170,7 +170,7 @@ func runTaskAdd(parentID int) error {
 	}
 
 	// Open the database
-	dbPath := filepath.Join(root, ".assistant-to", "state.db")
+	dbPath := filepath.Join(root, ".dwight", "state.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
@@ -188,7 +188,7 @@ func runTaskAdd(parentID int) error {
 	}
 
 	// Ensure specs directory exists
-	specsDir := filepath.Join(root, ".assistant-to", "specs")
+	specsDir := filepath.Join(root, ".dwight", "specs")
 	if err := os.MkdirAll(specsDir, 0755); err != nil {
 		// Rollback: remove the task from DB
 		if rollbackErr := database.RemoveTask(int(taskID)); rollbackErr != nil {
@@ -220,7 +220,7 @@ func runTaskList(status string) error {
 	if err != nil {
 		return fmt.Errorf("failed to find project root: %w", err)
 	}
-	dbPath := filepath.Join(root, ".assistant-to", "state.db")
+	dbPath := filepath.Join(root, ".dwight", "state.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
@@ -263,7 +263,7 @@ func runTaskUpdate(id int, status string) error {
 	if err != nil {
 		return fmt.Errorf("failed to find project root: %w", err)
 	}
-	dbPath := filepath.Join(root, ".assistant-to", "state.db")
+	dbPath := filepath.Join(root, ".dwight", "state.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
@@ -287,7 +287,7 @@ func runTaskRemove(id int) error {
 	if err != nil {
 		return fmt.Errorf("failed to find project root: %w", err)
 	}
-	dbPath := filepath.Join(root, ".assistant-to", "state.db")
+	dbPath := filepath.Join(root, ".dwight", "state.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)

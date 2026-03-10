@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"assistant-to/internal/config"
-	"assistant-to/internal/constants"
-	"assistant-to/internal/db"
-	"assistant-to/internal/sandbox"
+	"dwight/internal/config"
+	"dwight/internal/constants"
+	"dwight/internal/db"
+	"dwight/internal/sandbox"
 )
 
 // RecoveryState tracks the recovery status of an agent

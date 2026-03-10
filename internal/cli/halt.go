@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"assistant-to/internal/sandbox"
+	"dwight/internal/sandbox"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -13,7 +13,7 @@ import (
 var stopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop all agent sessions",
-	Long:  `Immediately kills all active assistant-to agent tmux sessions.`,
+	Long:  `Immediately kills all active dwight agent tmux sessions.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runHalt()
 	},
@@ -38,7 +38,7 @@ func runHalt() error {
 	warningStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB020"))
 	infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#A8A8A8"))
 
-	fmt.Println(headerStyle.Render("assistant-to: Emergency Halt"))
+	fmt.Println(headerStyle.Render("dwight: Emergency Halt"))
 	fmt.Println(infoStyle.Render("Searching for active agent sessions..."))
 
 	// List all tmux sessions

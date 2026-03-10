@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"assistant-to/internal/db"
+	"dwight/internal/db"
 
 	"github.com/spf13/cobra"
 )
@@ -33,7 +33,7 @@ to avoid repeating past mistakes and follow project conventions.`,
 			os.Exit(1)
 		}
 
-		dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
+		dbPath := filepath.Join(pwd, ".dwight", "state.db")
 		database, err := db.Open(dbPath)
 		if err != nil {
 			fmt.Printf("Failed to open database: %v\n", err)

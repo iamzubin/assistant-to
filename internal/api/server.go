@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"time"
 
-	"assistant-to/internal/config"
-	"assistant-to/internal/db"
-	"assistant-to/internal/metrics"
-	"assistant-to/internal/sandbox"
+	"dwight/internal/config"
+	"dwight/internal/db"
+	"dwight/internal/metrics"
+	"dwight/internal/sandbox"
 )
 
 type Server struct {

@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"assistant-to/internal/intelligence"
+	"dwight/internal/intelligence"
 
 	"github.com/spf13/cobra"
 )
@@ -31,7 +31,7 @@ var indexCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		dbPath := filepath.Join(pwd, ".assistant-to", "code-intelligence.db")
+		dbPath := filepath.Join(pwd, ".dwight", "code-intelligence.db")
 		if intelligenceIndexFile != "" {
 			dbPath = intelligenceIndexFile
 		}
@@ -71,7 +71,7 @@ var impactCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		dbPath := filepath.Join(pwd, ".assistant-to", "code-intelligence.db")
+		dbPath := filepath.Join(pwd, ".dwight", "code-intelligence.db")
 		if intelligenceIndexFile != "" {
 			dbPath = intelligenceIndexFile
 		}
@@ -124,7 +124,7 @@ var depsCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		dbPath := filepath.Join(pwd, ".assistant-to", "code-intelligence.db")
+		dbPath := filepath.Join(pwd, ".dwight", "code-intelligence.db")
 		if intelligenceIndexFile != "" {
 			dbPath = intelligenceIndexFile
 		}

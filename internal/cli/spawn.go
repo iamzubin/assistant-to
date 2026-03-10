@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"strings"
 
-	"assistant-to/internal/config"
-	"assistant-to/internal/db"
-	"assistant-to/internal/sandbox"
-	"assistant-to/internal/tasking"
+	"dwight/internal/config"
+	"dwight/internal/db"
+	"dwight/internal/sandbox"
+	"dwight/internal/tasking"
 
 	"github.com/spf13/cobra"
 )
@@ -37,7 +37,7 @@ var runCmd = &cobra.Command{
 		}
 
 		// Optionally create the worktree if it doesn't already exist
-		worktreeDir := filepath.Join(pwd, ".assistant-to", "worktrees", taskID)
+		worktreeDir := filepath.Join(pwd, ".dwight", "worktrees", taskID)
 		if taskID == "Coordinator" {
 			worktreeDir = pwd
 		} else if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {
@@ -50,7 +50,7 @@ var runCmd = &cobra.Command{
 		}
 
 		// Load config to determine the tool
-		configPath := filepath.Join(pwd, ".assistant-to", "config.yaml")
+		configPath := filepath.Join(pwd, ".dwight", "config.yaml")
 		conf, err := config.Load(configPath)
 		if err != nil {
 			fmt.Printf("Warning: failed to load workspace config, using defaults.\n")
@@ -101,7 +101,7 @@ var runCmd = &cobra.Command{
 		finalPrompt := spawnPrompt
 		if finalPrompt == "" {
 			// Look for prompts directory
-			promptsPath := filepath.Join(pwd, ".assistant-to", "prompts")
+			promptsPath := filepath.Join(pwd, ".dwight", "prompts")
 			if _, err := os.Stat(promptsPath); os.IsNotExist(err) {
 				promptsPath = filepath.Join(pwd, "internal", "orchestrator", "prompts")
 			}
@@ -127,7 +127,7 @@ var runCmd = &cobra.Command{
 
 		// If it's a numeric task ID, enrich the prompt with task details from DB
 		if id, err := strconv.Atoi(taskID); err == nil {
-			dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
+			dbPath := filepath.Join(pwd, ".dwight", "state.db")
 			database, err := db.Open(dbPath)
 			if err != nil {
 				fmt.Printf("Warning: failed to open state database for task enrichment: %v\n", err)
@@ -168,7 +168,7 @@ var runCmd = &cobra.Command{
 		opencodeConfig := map[string]interface{}{
 			"$schema": "https://opencode.ai/config.json",
 			"mcp": map[string]interface{}{
-				"assistant-to": map[string]interface{}{
+				"dwight": map[string]interface{}{
 					"type":    "local",
 					"command": []string{exePath, "mcp", "serve"},
 					"enabled": true,
@@ -188,7 +188,7 @@ var runCmd = &cobra.Command{
 		// Generate Gemini settings.json
 		geminiConfig := map[string]interface{}{
 			"mcpServers": map[string]interface{}{
-				"assistant-to": map[string]interface{}{
+				"dwight": map[string]interface{}{
 					"command": exePath,
 					"args":    []string{"mcp", "serve"},
 					"env": map[string]string{
@@ -208,7 +208,7 @@ var runCmd = &cobra.Command{
 
 		// Generate generic mcp.json
 		mcpConfig := map[string]interface{}{
-			"name":        "assistant-to",
+			"name":        "dwight",
 			"description": fmt.Sprintf("Assistant-to %s agent MCP server", role),
 			"transport":   "stdio",
 			"command":     exePath,
@@ -257,7 +257,7 @@ var runCmd = &cobra.Command{
 
 		// Update mission status if it's a numeric task ID
 		if id, err := strconv.Atoi(taskID); err == nil {
-			dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
+			dbPath := filepath.Join(pwd, ".dwight", "state.db")
 			database, err := db.Open(dbPath)
 			if err == nil {
 				database.UpdateTaskStatus(id, "started")

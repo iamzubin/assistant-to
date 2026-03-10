@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"assistant-to/internal/cli"
+	"dwight/internal/cli"
 )
 
 func main() {

@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"assistant-to/internal/api"
-	"assistant-to/internal/config"
-	"assistant-to/internal/db"
+	"dwight/internal/api"
+	"dwight/internal/config"
+	"dwight/internal/db"
 
 	"github.com/spf13/cobra"
 )
@@ -26,7 +26,7 @@ var mcpServeCmd = &cobra.Command{
 	Long: `Runs the MCP server in stdio mode for connecting to AI tools like opencode, Claude Desktop, etc.
 
 This command starts an MCP server that communicates via stdin/stdout using JSON-RPC 2.0.
-It allows AI tools to discover and call tools provided by the assistant-to coordinator.
+It allows AI tools to discover and call tools provided by the dwight coordinator.
 
 Environment Variables:
   AT_MCP_PORT    MCP HTTP port (default: 8766)
@@ -35,7 +35,7 @@ Example usage with opencode:
   Add to ~/.config/opencode/mcp.json:
   {
     "mcpServers": {
-      "assistant-to": {
+      "dwight": {
         "command": "dwight",
         "args": ["mcp", "serve"]
       }
@@ -54,13 +54,13 @@ Example usage with opencode:
 			}
 		}
 
-		configPath := filepath.Join(pwd, ".assistant-to", "config.yaml")
+		configPath := filepath.Join(pwd, ".dwight", "config.yaml")
 		cfg, err := config.Load(configPath)
 		if err != nil {
 			cfg = config.Default()
 		}
 
-		dbPath := filepath.Join(pwd, ".assistant-to", "state.db")
+		dbPath := filepath.Join(pwd, ".dwight", "state.db")
 		database, err := db.Open(dbPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)

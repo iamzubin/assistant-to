@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"assistant-to/internal/config"
-	"assistant-to/internal/db"
+	"dwight/internal/config"
+	"dwight/internal/db"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
@@ -30,8 +30,8 @@ var (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize the assistant-to workspace in the current directory",
-	Long: `Creates the local .assistant-to directory structure, configures the environment, and initializes the state database.
+	Short: "Initialize the dwight workspace in the current directory",
+	Long: `Creates the local .dwight directory structure, configures the environment, and initializes the state database.
 This must be run once per project before launching the orchestrator or any agents.
 
 For automated/non-interactive initialization, use flags:
@@ -104,7 +104,7 @@ func runInit() error {
 
 	// Interactive mode (unless --non-interactive flag is set)
 	if !initNonInteractive {
-		fmt.Println(headerStyle.Render("assistant-to: Workspace Setup"))
+		fmt.Println(headerStyle.Render("dwight: Workspace Setup"))
 		fmt.Println(subHeaderStyle.Render("Welcome to the Managing Director's Autonomous Coding Swarm.\nLet's configure your agent tiers."))
 
 		// Step 1: Tool Selection (if not provided via flag)
@@ -272,7 +272,7 @@ func runInit() error {
 	fmt.Println()
 
 	// Step 3: Scaffold Directory Structure
-	baseDir := ".assistant-to"
+	baseDir := ".dwight"
 	dirs := []string{
 		filepath.Join(baseDir, "specs"),
 		filepath.Join(baseDir, "worktrees"),
@@ -312,8 +312,8 @@ func runInit() error {
 			CanonicalBranch: initBranch,
 		},
 		Agents: config.AgentsConfig{
-			ManifestPath:   ".assistant-to/agent-manifest.json",
-			BaseDir:        ".assistant-to/agent-defs",
+			ManifestPath:   ".dwight/agent-manifest.json",
+			BaseDir:        ".dwight/agent-defs",
 			MaxConcurrent:  initMaxAgents,
 			StaggerDelayMs: 2000,
 			MaxDepth:       2,
@@ -321,7 +321,7 @@ func runInit() error {
 			ScoutWaitSec:   600, // 10 minutes
 		},
 		Worktrees: config.WorktreesConfig{
-			BaseDir: ".assistant-to/worktrees",
+			BaseDir: ".dwight/worktrees",
 		},
 		TaskTracker: config.TaskTrackerConfig{
 			Enabled: true,
@@ -422,7 +422,7 @@ func runInit() error {
 	err = huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
-				Title("Add .assistant-to to .gitignore?").
+				Title("Add .dwight to .gitignore?").
 				Description("Prevents your local workspace state from being tracked.").
 				Value(&addToGitignore),
 		),
@@ -432,7 +432,7 @@ func runInit() error {
 	}
 
 	gitignoreEntries := []string{
-		".assistant-to/",
+		".dwight/",
 		"mcp.json",
 		"opencode.json",
 		".gemini/",
@@ -471,15 +471,15 @@ func fetchOpencodeModels() ([]string, error) {
 	return models, nil
 }
 
-// copyDefaultPrompts copies prompt files from the assistant-to binary location to the project
+// copyDefaultPrompts copies prompt files from the dwight binary location to the project
 func copyDefaultPrompts(destDir string) error {
 	// Try to find prompts in multiple locations
 	possiblePaths := []string{
-		// Check if we're running from the assistant-to repo
+		// Check if we're running from the dwight repo
 		filepath.Join("internal", "orchestrator", "prompts"),
 		// Check relative to executable (for installed binary)
 		filepath.Join("..", "..", "internal", "orchestrator", "prompts"),
-		filepath.Join("/usr", "local", "share", "assistant-to", "prompts"),
+		filepath.Join("/usr", "local", "share", "dwight", "prompts"),
 	}
 
 	var sourceDir string
@@ -492,11 +492,11 @@ func copyDefaultPrompts(destDir string) error {
 
 	if sourceDir == "" {
 		// Last resort: try to find prompts relative to current working directory
-		// assuming we might be in a subdirectory of the assistant-to repo
+		// assuming we might be in a subdirectory of the dwight repo
 		cwd, _ := os.Getwd()
 		possiblePaths = []string{
-			filepath.Join(cwd, "..", "assistant-to", "internal", "orchestrator", "prompts"),
-			filepath.Join(cwd, "..", "..", "assistant-to", "internal", "orchestrator", "prompts"),
+			filepath.Join(cwd, "..", "dwight", "internal", "orchestrator", "prompts"),
+			filepath.Join(cwd, "..", "..", "dwight", "internal", "orchestrator", "prompts"),
 		}
 		for _, path := range possiblePaths {
 			if info, err := os.Stat(path); err == nil && info.IsDir() {
@@ -584,7 +584,7 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 		return fmt.Errorf("failed to create mcp-configs directory: %w", err)
 	}
 
-	// Get project root (parent of .assistant-to)
+	// Get project root (parent of .dwight)
 	projectRoot := filepath.Dir(baseDir)
 
 	// Use absolute path for the command to ensure it works from any directory
@@ -593,7 +593,7 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 		absDwightPath = "dwight" // Fallback
 	}
 
-	// Generate coordinator MCP configs in PROJECT ROOT (not .assistant-to)
+	// Generate coordinator MCP configs in PROJECT ROOT (not .dwight)
 	// Use env vars - the server will set these when starting
 	// This allows dynamic port assignment per project instance
 
@@ -601,7 +601,7 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 	opencodeConfig := map[string]interface{}{
 		"$schema": "https://opencode.ai/config.json",
 		"mcp": map[string]interface{}{
-			"assistant-to": map[string]interface{}{
+			"dwight": map[string]interface{}{
 				"type":    "local",
 				"command": []string{absDwightPath, "mcp", "serve"},
 				"enabled": true,
@@ -626,7 +626,7 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 	// 2. .gemini/settings.json for Gemini CLI
 	geminiConfig := map[string]interface{}{
 		"mcpServers": map[string]interface{}{
-			"assistant-to": map[string]interface{}{
+			"dwight": map[string]interface{}{
 				"command": absDwightPath,
 				"args":    []string{"mcp", "serve"},
 				"env": map[string]string{
@@ -654,7 +654,7 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 
 	// 3. mcp.json generic config
 	mcpConfig := map[string]interface{}{
-		"name":        "assistant-to",
+		"name":        "dwight",
 		"description": "Assistant-to Coordinator MCP server",
 		"transport":   "stdio",
 		"command":     absDwightPath,
@@ -678,7 +678,7 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 	// 4. Template configs in mcp-configs directory (for reference/copying)
 	templateConfig := map[string]interface{}{
 		"mcpServers": map[string]interface{}{
-			"assistant-to": map[string]interface{}{
+			"dwight": map[string]interface{}{
 				"command": "dwight",
 				"args":    []string{"mcp", "serve"},
 				"env": map[string]string{
@@ -704,10 +704,10 @@ func generateMCPConfigs(baseDir string, cfg *config.Config) error {
 		"- **mcp.json**: Generic MCP config\n\n" +
 		"## Usage\n\n" +
 		"### Opencode\n\n" +
-		"The opencode.json in your project root configures opencode to connect to the assistant-to MCP server.\n" +
+		"The opencode.json in your project root configures opencode to connect to the dwight MCP server.\n" +
 		"Opencode automatically reads this file when run from the project directory.\n\n" +
 		"### Gemini CLI\n\n" +
-		"The .gemini/settings.json in your project root configures Gemini CLI to connect to the assistant-to MCP server.\n" +
+		"The .gemini/settings.json in your project root configures Gemini CLI to connect to the dwight MCP server.\n" +
 		"Gemini CLI automatically reads this file when run from the project directory.\n\n" +
 		"## Agent Roles\n\n" +
 		"- **Coordinator** (project root): Full access - runs `dwight up`\n" +

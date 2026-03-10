@@ -1,4 +1,4 @@
-module assistant-to
+module dwight
 
 go 1.24.2
 

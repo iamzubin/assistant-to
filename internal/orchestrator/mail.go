@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"assistant-to/internal/db"
+	"dwight/internal/db"
 )
 
 type MailIngestor struct {

@@ -7,9 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"assistant-to/internal/config"
-	"assistant-to/internal/orchestrator"
-	"assistant-to/internal/sandbox"
+	"dwight/internal/config"
+	"dwight/internal/orchestrator"
+	"dwight/internal/sandbox"
 
 	"github.com/spf13/cobra"
 )
@@ -42,7 +42,7 @@ This launches:
 		prefix := sandbox.ProjectPrefix(pwd)
 
 		// Step 1: Load config and calculate project-specific ports
-		configPath := filepath.Join(pwd, ".assistant-to", "config.yaml")
+		configPath := filepath.Join(pwd, ".dwight", "config.yaml")
 		cfg, err := config.Load(configPath)
 		if err != nil {
 			fmt.Printf("Warning: failed to load config, using defaults: %v\n", err)
@@ -57,11 +57,11 @@ This launches:
 
 		checkCmd := exec.Command("tmux", "has-session", "-t", serverSession)
 		if checkCmd.Run() != nil {
-			logFile := fmt.Sprintf("%s/.assistant-to/logs/coordinator.log", pwd)
-			os.MkdirAll(fmt.Sprintf("%s/.assistant-to/logs", pwd), 0755)
+			logFile := fmt.Sprintf("%s/.dwight/logs/coordinator.log", pwd)
+			os.MkdirAll(fmt.Sprintf("%s/.dwight/logs", pwd), 0755)
 			// Pass MCP port via env var to the server
 			serveCmd := exec.Command("tmux", "new-session", "-d", "-s", serverSession,
-				fmt.Sprintf("mkdir -p %s/.assistant-to/logs && AT_MCP_PORT=%d %s serve > %s 2>&1", pwd, mcpPort, exePath, logFile))
+				fmt.Sprintf("mkdir -p %s/.dwight/logs && AT_MCP_PORT=%d %s serve > %s 2>&1", pwd, mcpPort, exePath, logFile))
 			if err := serveCmd.Run(); err != nil {
 				fmt.Printf("Failed to start servers: %v\n", err)
 			} else {
@@ -75,7 +75,7 @@ This launches:
 		opencodeConfig := map[string]interface{}{
 			"$schema": "https://opencode.ai/config.json",
 			"mcp": map[string]interface{}{
-				"assistant-to": map[string]interface{}{
+				"dwight": map[string]interface{}{
 					"type":    "local",
 					"command": []string{"dwight", "mcp", "serve"},
 					"enabled": true,

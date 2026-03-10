@@ -1,8 +1,8 @@
-# assistant-to
+# dwight
 
 **The Managing Director's Autonomous Coding Swarm**
 
-`assistant-to` is a multi-agent orchestrator built in Go. It allows you to manage tasks using a swarm of autonomous agents that communicate via a local SQLite mailbox, work in isolated Git worktrees, and are supervised by a coordinator.
+`dwight` is a multi-agent orchestrator built in Go. It allows you to manage tasks using a swarm of autonomous agents that communicate via a local SQLite mailbox, work in isolated Git worktrees, and are supervised by a coordinator.
 
 ## 📋 Prerequisites
 
@@ -13,7 +13,7 @@ Before installing, ensure you have the following available:
 
 ## 📦 Installation
 
-To install `assistant-to` globally:
+To install `dwight` globally:
 
 ```bash
 go install ./cmd/dwight
@@ -34,7 +34,7 @@ Run this in the root of the git repository you want to manage.
 ```bash
 dwight init
 ```
-This will create a `.assistant-to` directory with your configuration and state database.
+This will create a `.dwight` directory with your configuration and state database.
 
 ### 2. Add a task
 ```bash
@@ -81,7 +81,7 @@ go test ./...
 - `dwight task add` - Interactive form to queue new work.
 - `dwight start` - Starts the Coordinator.
 - `dwight dash` - Opens the live TUI dashboard.
-- `dwight halt` - Instantly kills all `assistant-to-*` tmux sessions.
+- `dwight halt` - Instantly kills all `dwight-*` tmux sessions.
 
 ---
 

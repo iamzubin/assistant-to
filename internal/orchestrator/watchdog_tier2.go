@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"assistant-to/internal/db"
-	"assistant-to/internal/sandbox"
+	"dwight/internal/db"
+	"dwight/internal/sandbox"
 )
 
 // Tier2Watchdog (Monitor Agent) detects objective drift in Builder agents
@@ -227,7 +227,7 @@ func (s DriftSeverity) String() string {
 // checkForDrift analyzes a task and its worktree for objective drift
 func (t *Tier2Watchdog) checkForDrift(ctx context.Context, task db.Task, agentID string) (*DriftReport, error) {
 	// Get worktree path
-	worktreeDir := filepath.Join(t.PWD, ".assistant-to", "worktrees", fmt.Sprintf("%d", task.ID))
+	worktreeDir := filepath.Join(t.PWD, ".dwight", "worktrees", fmt.Sprintf("%d", task.ID))
 
 	// Check if worktree exists
 	if _, err := os.Stat(worktreeDir); os.IsNotExist(err) {

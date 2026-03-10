@@ -1,7 +1,7 @@
 # SPEC.md - Assistant-To Specification
 
 ## 1. Overview
-`assistant-to` (CLI: `dwight`) is a multi-agent orchestrator designed for autonomous software development. It enables a "swarm" of AI agents to work on a codebase safely and concurrently by utilizing Git worktrees and tmux for isolation.
+`dwight` (CLI: `dwight`) is a multi-agent orchestrator designed for autonomous software development. It enables a "swarm" of AI agents to work on a codebase safely and concurrently by utilizing Git worktrees and tmux for isolation.
 
 ## 2. Core Philosophy
 - **Isolation**: Every task is executed in a dedicated Git worktree and a sandboxed tmux session.
@@ -11,7 +11,7 @@
 ## 3. System Architecture
 
 ### 3.1 State Management (SQLite)
-The system state is persisted in `.assistant-to/state.db`:
+The system state is persisted in `.dwight/state.db`:
 - **Tasks**: Lifecycle management (Pending -> Scouting -> Building -> Merging -> Complete).
 - **Mailbox**: A typed message queue for agent-to-agent and agent-to-system communication.
 - **Events**: Audit log of all system and agent actions.
@@ -35,7 +35,7 @@ Agents interact with the system via:
 - **REST API**: Internal server providing status updates and configuration. Ports are deterministically calculated based on the project path to prevent conflicts between multiple instances.
 
 ### 3.5 Code Intelligence (Mulch)
-`assistant-to` includes a dedicated code intelligence engine called "Mulch":
+`dwight` includes a dedicated code intelligence engine called "Mulch":
 - **Static Analysis**: Parses Go source code using `go/parser` to build a symbol index.
 - **Dependency Graph**: Maps relationships between files, packages, and types (structs, interfaces).
 - **Impact Analysis**: Helps agents understand the ripple effects of proposed changes by tracing function calls and type usages.

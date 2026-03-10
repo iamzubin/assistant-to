@@ -6,8 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"assistant-to/internal/db"
-	"assistant-to/internal/tui"
+	"dwight/internal/db"
+	"dwight/internal/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -33,7 +33,7 @@ func runDash(autoSpawn bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to find project root: %w", err)
 	}
-	dbPath := filepath.Join(root, ".assistant-to", "state.db")
+	dbPath := filepath.Join(root, ".dwight", "state.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open workspace database: %w\nMake sure you have run 'dwight init' first.", err)

@@ -153,7 +153,7 @@ func (ci *CodeIndex) IndexProject(projectPath string) error {
 			return err
 		}
 
-		// Skip vendor, .git, .assistant-to, etc.
+		// Skip vendor, .git, .dwight, etc.
 		if info.IsDir() {
 			if strings.HasPrefix(info.Name(), ".") || info.Name() == "vendor" {
 				return filepath.SkipDir

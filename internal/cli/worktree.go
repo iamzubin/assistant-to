@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"assistant-to/internal/sandbox"
+	"dwight/internal/sandbox"
 
 	"github.com/spf13/cobra"
 )
@@ -18,7 +18,7 @@ var worktreeCmd = &cobra.Command{
 var createWorktreeCmd = &cobra.Command{
 	Use:   "create <task-id> [base-branch]",
 	Short: "Create a sandboxed git worktree",
-	Long:  `Initializes a new git worktree located in .assistant-to/worktrees/<task-id>, checked out to a new branch for the task based on the specified base branch (defaulting to 'main').`,
+	Long:  `Initializes a new git worktree located in .dwight/worktrees/<task-id>, checked out to a new branch for the task based on the specified base branch (defaulting to 'main').`,
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		taskID := args[0]
