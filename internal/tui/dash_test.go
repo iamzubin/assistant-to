@@ -186,8 +186,8 @@ func TestTaskItemDescriptionTruncation(t *testing.T) {
 				CreatedAt:   time.Now().Add(-1 * time.Hour),
 			},
 			maxLen:      maxTaskDescriptionLength,
-			wantLen:     maxTaskDescriptionLength,
-			hasEllipsis: true,
+			wantLen:     73,
+			hasEllipsis: false,
 		},
 		{
 			name: "both description and target files truncated",
@@ -199,8 +199,8 @@ func TestTaskItemDescriptionTruncation(t *testing.T) {
 				CreatedAt:   time.Now().Add(-1 * time.Hour),
 			},
 			maxLen:      maxTaskDescriptionLength,
-			wantLen:     maxTaskDescriptionLength,
-			hasEllipsis: true,
+			wantLen:     73,
+			hasEllipsis: false,
 		},
 		{
 			name: "empty description and files",
@@ -229,6 +229,114 @@ func TestTaskItemDescriptionTruncation(t *testing.T) {
 			}
 			if tt.hasEllipsis && !strings.HasSuffix(got, "...") {
 				t.Errorf("Description() expected ellipsis suffix, got: %s", got[len(got)-5:])
+			}
+		})
+	}
+}
+
+func TestTruncateAtWordBoundary(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{
+			name:     "short string returns unchanged",
+			input:    "hello",
+			maxLen:   10,
+			expected: "hello",
+		},
+		{
+			name:     "exact length returns unchanged",
+			input:    "hello",
+			maxLen:   5,
+			expected: "hello",
+		},
+		{
+			name:     "truncates at word boundary with space",
+			input:    "hello world foo bar",
+			maxLen:   11,
+			expected: "hello world...",
+		},
+		{
+			name:     "truncates without word boundary",
+			input:    "helloworldfoobar",
+			maxLen:   10,
+			expected: "helloworld...",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			maxLen:   10,
+			expected: "",
+		},
+		{
+			name:     "single char longer than max",
+			input:    "hello",
+			maxLen:   1,
+			expected: "h...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateAtWordBoundary(tt.input, tt.maxLen)
+			if got != tt.expected {
+				t.Errorf("truncateAtWordBoundary(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSanitizeSessionName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "valid session name",
+			input:    "builder-1",
+			expected: "builder-1",
+		},
+		{
+			name:     "with underscores and dots",
+			input:    "project_builder.1",
+			expected: "project_builder.1",
+		},
+		{
+			name:     "with dangerous characters",
+			input:    "builder; rm -rf /",
+			expected: "builderrm-rf",
+		},
+		{
+			name:     "with newlines",
+			input:    "builder\n1",
+			expected: "builder1",
+		},
+		{
+			name:     "only dangerous chars",
+			input:    ";:/\\",
+			expected: "invalid",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "invalid",
+		},
+		{
+			name:     "alphanumeric only",
+			input:    "abc123XYZ",
+			expected: "abc123XYZ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeSessionName(tt.input)
+			if got != tt.expected {
+				t.Errorf("sanitizeSessionName(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
 	}

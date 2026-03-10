@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"dwight/internal/db"
@@ -81,42 +82,36 @@ func (t taskItem) Title() string {
 	if t.ParentID > 0 {
 		parentInfo = fmt.Sprintf(" ↳(P:%d)", t.ParentID)
 	}
-	return fmt.Sprintf("[%d] %s %s%s", t.ID, priority, t.Task.Title, parentInfo)
+	title := truncateAtWordBoundary(t.Task.Title, 40)
+	return fmt.Sprintf("[%d] %s %s%s", t.ID, priority, title, parentInfo)
 }
 
 const maxTaskDescriptionLength = 80
 
+func truncateAtWordBoundary(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	truncated := s[:maxLen]
+	lastSpace := strings.LastIndexAny(truncated, " \t\n")
+	if lastSpace > maxLen/2 {
+		return truncated[:lastSpace] + "..."
+	}
+	return truncated + "..."
+}
+
 func (t taskItem) Description() string {
 	statusColored := lipgloss.NewStyle().Foreground(statusColor(t.Status)).Bold(true).Render(t.Status)
 
-	var descParts []string
-	descParts = append(descParts, fmt.Sprintf("Status: %s", statusColored))
-
+	desc := ""
 	if t.Task.Description != "" {
-		desc := t.Task.Description
-		if len(desc) > 40 {
-			desc = desc[:37] + "..."
-		}
-		descParts = append(descParts, fmt.Sprintf("Desc: %s", desc))
-	}
-
-	if t.Task.TargetFiles != "" {
-		files := t.Task.TargetFiles
-		if len(files) > 30 {
-			files = files[:27] + "..."
-		}
-		descParts = append(descParts, fmt.Sprintf("Files: %s", files))
+		desc = "Desc: " + truncateAtWordBoundary(t.Task.Description, 35) + " • "
 	}
 
 	age := time.Since(t.Task.CreatedAt)
 	ageStr := formatDuration(age)
-	descParts = append(descParts, fmt.Sprintf("Created: %s ago", ageStr))
 
-	combined := strings.Join(descParts, " • ")
-	if len(combined) > maxTaskDescriptionLength {
-		combined = combined[:maxTaskDescriptionLength-3] + "..."
-	}
-	return combined
+	return desc + "Status: " + statusColored + " • Created: " + ageStr + " ago"
 }
 func (t taskItem) FilterValue() string { return t.Task.Title }
 
@@ -233,11 +228,22 @@ type dashModel struct {
 	headerStyle       lipgloss.Style
 	footerStyle       lipgloss.Style
 	confirmStyle      lipgloss.Style
+
+	// Synchronization
+	mu sync.Mutex
 }
 
 type tickMsg time.Time
 
 func NewDashModel(database *db.DB, projectRoot string) tea.Model {
+	if database == nil {
+		m := dashModel{
+			projectRoot: projectRoot,
+			width:       80,
+			height:      24,
+		}
+		return m
+	}
 
 	tList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	tList.Title = "Task Board"
@@ -473,6 +479,10 @@ func (m *dashModel) resizePanes() {
 		return
 	}
 
+	if m.width <= 0 || m.height <= 0 {
+		return
+	}
+
 	hBord := 4
 	vBord := 2
 
@@ -511,18 +521,35 @@ func (m *dashModel) resizePanes() {
 	}
 
 	if m.showTasksPane {
-		m.taskList.SetSize(leftWidth-hBord, m.height-vBord-3)
+		taskPaneHeight := m.height - vBord - 3
+		if taskPaneHeight < 1 {
+			taskPaneHeight = 1
+		}
+		m.taskList.SetSize(leftWidth-hBord, taskPaneHeight)
 	}
 
 	if m.showAgentsPane {
-		m.agentList.SetSize(centerWidth-hBord, agentsHeight-vBord)
+		agentPaneHeight := agentsHeight - vBord
+		if agentPaneHeight < 1 {
+			agentPaneHeight = 1
+		}
+		m.agentList.SetSize(centerWidth-hBord, agentPaneHeight)
 	}
 
-	m.feedList.SetSize(centerWidth-hBord, feedHeight-vBord)
+	feedPaneHeight := feedHeight - vBord
+	if feedPaneHeight < 1 {
+		feedPaneHeight = 1
+	}
+	m.feedList.SetSize(centerWidth-hBord, feedPaneHeight)
 }
 
 func (m *dashModel) refreshData() {
-	// Tasks
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.db == nil {
+		return
+	}
 	tasks, err := m.db.ListTasksByStatus("")
 	if err == nil {
 		sort.Slice(tasks, func(i, j int) bool {
@@ -627,12 +654,22 @@ func (m *dashModel) refreshData() {
 	// Token Metrics
 	if m.showTokensPane {
 		summary, err := m.db.GetTokenMetricsSummary()
-		if err == nil {
-			m.tokenSummary.TotalTokens = summary["total_tokens"].(int64)
-			m.tokenSummary.TotalCostUSD = summary["total_cost_usd"].(float64)
-			m.tokenSummary.TotalPromptTokens = summary["total_prompt_tokens"].(int64)
-			m.tokenSummary.TotalCompletionTokens = summary["total_completion_tokens"].(int64)
-			m.tokenSummary.AgentCount = summary["agent_count"].(int)
+		if err == nil && summary != nil {
+			if v, ok := summary["total_tokens"].(int64); ok {
+				m.tokenSummary.TotalTokens = v
+			}
+			if v, ok := summary["total_cost_usd"].(float64); ok {
+				m.tokenSummary.TotalCostUSD = v
+			}
+			if v, ok := summary["total_prompt_tokens"].(int64); ok {
+				m.tokenSummary.TotalPromptTokens = v
+			}
+			if v, ok := summary["total_completion_tokens"].(int64); ok {
+				m.tokenSummary.TotalCompletionTokens = v
+			}
+			if v, ok := summary["agent_count"].(int); ok {
+				m.tokenSummary.AgentCount = v
+			}
 		}
 		topConsumers, err := m.db.GetTopTokenConsumers(5)
 		if err == nil {
@@ -641,7 +678,8 @@ func (m *dashModel) refreshData() {
 	}
 
 	// Coordinator Status
-	coordSession := prefix + "coordinator"
+	safePrefix := sanitizeSessionName(prefix)
+	coordSession := safePrefix + "coordinator"
 	coordCheck := exec.Command("tmux", "has-session", "-t", coordSession)
 	m.coordinatorRunning = coordCheck.Run() == nil
 
@@ -652,7 +690,7 @@ func (m *dashModel) refreshData() {
 
 	// Get server sessions
 	var sessions []string
-	serversSession := prefix + "servers"
+	serversSession := safePrefix + "servers"
 	serversCheck := exec.Command("tmux", "has-session", "-t", serversSession)
 	if serversCheck.Run() == nil {
 		sessions = append(sessions, "servers")
@@ -896,4 +934,17 @@ func formatTokens(n int64) string {
 		return fmt.Sprintf("%.1fK", float64(n)/1_000)
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+func sanitizeSessionName(name string) string {
+	var result strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' {
+			result.WriteRune(c)
+		}
+	}
+	if result.Len() == 0 {
+		return "invalid"
+	}
+	return result.String()
 }
