@@ -22,6 +22,7 @@ Implement assigned tasks fully within your isolated worktree environment.
 - If tests fail: debug and fix, don't wait for help
 
 ## Communication
+- **Check mail frequently**: At start, after every major milestone, and periodically throughout task execution
 - Check mail periodically for cancellation signals only
 - Report progress and completion via mail
 - Escalate blockers via mail with specific error details

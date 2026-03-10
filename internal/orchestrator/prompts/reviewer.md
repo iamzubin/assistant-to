@@ -28,3 +28,4 @@ Verify completed implementations meet quality standards.
 - **Read-only** - never modify code
 - Be decisive - no "needs discussion" reports
 - Specific feedback on failures
+- **Check mail frequently**: At start, after rendering verdict, and periodically throughout

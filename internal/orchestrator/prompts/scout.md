@@ -28,4 +28,5 @@ Analyze the codebase to understand task scope before implementation begins.
 ## Constraints
 - **Read-only** - never modify files
 - Complete within 10 minutes
+- **Check mail frequently**: At start, after major discoveries, and periodically throughout
 - Check mail only for cancellation signals
