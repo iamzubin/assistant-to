@@ -67,19 +67,23 @@ func ParseTokenMetrics(transcript string) *ParsedTokenMetrics {
 }
 
 func extractModel(line string) string {
+	lineLower := strings.ToLower(line)
+
 	modelPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(?:model|using)[:\s]+(gemini[\w.-]*|GPT[\w.-]*|claude[\w.-]*)`),
-		regexp.MustCompile(`(?i)(?:gemini|GPT|claude)[\w.-]+`),
+		regexp.MustCompile(`(?i)(?:model|using)[:\s]+([a-zA-Z][\w.\s-]*)`),
+		regexp.MustCompile(`(?i)(gemini-[\w.]+|gpt-[\w.]+|claude-[\w.]+)`),
+		regexp.MustCompile(`(?i)(gemini[\w.\s]+|gpt[\w.\s]+|claude[\w.\s]+)`),
+		regexp.MustCompile(`(?i)(anthropic claude[\w.\s-]*)`),
 	}
 
 	for _, pattern := range modelPatterns {
 		if match := pattern.FindStringSubmatch(line); len(match) > 1 {
-			return strings.TrimSpace(match[1])
+			return strings.ToLower(strings.TrimSpace(match[1]))
 		}
 	}
 
 	for _, model := range []string{"gemini", "gpt", "claude", "anthropic"} {
-		if strings.Contains(strings.ToLower(line), model) {
+		if strings.Contains(lineLower, model) {
 			return model
 		}
 	}
