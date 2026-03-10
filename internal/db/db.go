@@ -39,7 +39,8 @@ func (d *DB) InitSchema() error {
 		sender TEXT NOT NULL,
 		recipient TEXT NOT NULL,
 		subject TEXT NOT NULL,
-		body TEXT NOT NULL,
+		body TEXT NOT NULL DEFAULT '',
+		body_path TEXT,
 		type TEXT DEFAULT 'status',
 		priority INTEGER DEFAULT 5,
 		is_read BOOLEAN DEFAULT FALSE,
@@ -85,6 +86,10 @@ func (d *DB) InitSchema() error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize schema: %w", err)
 	}
+
+	// Migrations
+	_, _ = d.Exec("ALTER TABLE mail ADD COLUMN body_path TEXT")
+	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_mail_body_path ON mail(body_path)")
 
 	// Enable foreign keys
 	_, err = d.Exec("PRAGMA foreign_keys = ON;")

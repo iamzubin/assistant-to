@@ -2,25 +2,38 @@ package orchestrator
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"assistant-to/internal/db"
 )
 
 type MailIngestor struct {
-	db *db.DB
+	db         *db.DB
+	storageDir string
 }
 
 func NewMailIngestor(database *db.DB) *MailIngestor {
 	return &MailIngestor{db: database}
 }
 
+func NewMailIngestorWithStorage(database *db.DB, storageDir string) *MailIngestor {
+	return &MailIngestor{db: database, storageDir: storageDir}
+}
+
+func (m *MailIngestor) SetStorageDir(dir string) {
+	m.storageDir = dir
+}
+
 func (m *MailIngestor) Ingest(sender, recipient, subject, body, mailType string, priority int) error {
+	if m.storageDir != "" {
+		return m.db.SendMailWithStorage(sender, recipient, subject, body, mailType, priority, m.storageDir)
+	}
 	return m.db.SendMail(sender, recipient, subject, body, mailType, priority)
 }
 
 func (m *MailIngestor) IngestSimple(sender, recipient, subject, body string) error {
-	return m.db.SendMailSimple(sender, recipient, subject, body)
+	return m.Ingest(sender, recipient, subject, body, db.MailTypeStatus, db.PriorityNormal)
 }
 
 func (m *MailIngestor) GetUnread(agentID string, limit int) ([]db.Mail, error) {
@@ -71,6 +84,54 @@ func (m *MailIngestor) GetSummary(agentID string) (map[string]int, error) {
 		summary[mailType] = len(mail)
 	}
 	return summary, nil
+}
+
+func (m *MailIngestor) GetSummaries(agentID string, limit, offset int) ([]db.MailSummary, error) {
+	return m.db.GetUnreadMailSummaries(agentID, limit, offset)
+}
+
+func (m *MailIngestor) GetSummariesByType(agentID, mailType string, limit, offset int) ([]db.MailSummary, error) {
+	return m.db.GetUnreadMailSummariesByType(agentID, mailType, limit, offset)
+}
+
+func (m *MailIngestor) GetUnreadPaginated(agentID string, limit, offset int) ([]db.Mail, error) {
+	return m.db.GetUnreadMailPaginated(agentID, limit, offset)
+}
+
+func (m *MailIngestor) GetByID(mailID int) (*db.Mail, error) {
+	return m.db.GetMailByID(mailID)
+}
+
+func (m *MailIngestor) InjectSummariesForContext(agentID string, limit int) (string, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	summaries, err := m.db.GetUnreadMailSummaries(agentID, limit, 0)
+	if err != nil {
+		return "", fmt.Errorf("failed to get mail summaries: %w", err)
+	}
+
+	if len(summaries) == 0 {
+		return "", nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("[SYSTEM] You have the following unread messages:\n\n")
+
+	for i, s := range summaries {
+		sb.WriteString(fmt.Sprintf("--- Message %d ---\n", i+1))
+		sb.WriteString(fmt.Sprintf("From: %s\n", s.Sender))
+		sb.WriteString(fmt.Sprintf("Subject: %s\n", s.Subject))
+		sb.WriteString(fmt.Sprintf("Type: %s | Priority: %d\n", s.Type, s.Priority))
+		if s.HasBody {
+			sb.WriteString(fmt.Sprintf("Preview: %s\n", s.BodyTrunc))
+			sb.WriteString(fmt.Sprintf("(Full body available via mail ID %d)\n", s.ID))
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String(), nil
 }
 
 func (m *MailIngestor) MarkRead(mailID int) error {
