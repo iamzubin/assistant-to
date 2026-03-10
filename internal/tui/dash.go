@@ -899,7 +899,7 @@ func (m *dashModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, mainRow, footer)
 }
 
-func (m dashModel) renderTokenPane(width int) string {
+func (m *dashModel) renderTokenPane(width int) string {
 	style := m.inactivePaneStyle.Width(width).Height(m.height - 5)
 
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFD700"))
