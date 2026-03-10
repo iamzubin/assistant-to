@@ -60,6 +60,7 @@ const (
 	FailureModeTestFailure
 	FailureModeResourceExhaustion
 	FailureModeNetworkTimeout
+	FailureModeTerminal // Terminal failure - should terminate agent
 )
 
 func (f FailureMode) String() string {
@@ -76,6 +77,8 @@ func (f FailureMode) String() string {
 		return "resource_exhaustion"
 	case FailureModeNetworkTimeout:
 		return "network_timeout"
+	case FailureModeTerminal:
+		return "terminal"
 	default:
 		return "unknown"
 	}
