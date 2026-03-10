@@ -98,6 +98,9 @@ func TestParseTokenMetrics(t *testing.T) {
 			if got.CostUSD != tt.want.CostUSD {
 				t.Errorf("CostUSD = %v, want %v", got.CostUSD, tt.want.CostUSD)
 			}
+			if got.Model != tt.want.Model {
+				t.Errorf("Model = %q, want %q", got.Model, tt.want.Model)
+			}
 		})
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"dwight/internal/config"
@@ -625,10 +626,11 @@ func (s *Server) handleTokensExtract(w http.ResponseWriter, r *http.Request) {
 		parsedMetrics.CostUSD = metrics.CalculateCost(parsedMetrics.PromptTokens, parsedMetrics.CompletionTokens, parsedMetrics.Model)
 	}
 
-	taskID, _ := strconv.ParseInt(req.AgentID, 10, 64)
 	var taskIDPtr *int64
-	if taskID > 0 {
-		taskIDPtr = &taskID
+	if parts := strings.Split(req.AgentID, "-"); len(parts) >= 2 {
+		if taskID, err := strconv.ParseInt(parts[len(parts)-1], 10, 64); err == nil && taskID > 0 {
+			taskIDPtr = &taskID
+		}
 	}
 
 	err = s.db.RecordTokenMetrics(req.AgentID, taskIDPtr, parsedMetrics.PromptTokens, parsedMetrics.CompletionTokens, parsedMetrics.CostUSD, parsedMetrics.Model)
